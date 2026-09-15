@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Event Study — GICS industries, sectors & asset classes</title>
+<link rel="stylesheet" href="app.css">
+<script src="site.js"></script>
+<style>#btn-update{display:none}</style>
+</head>
+<body>
+<header>
+  <h1>Event Study</h1>
+  <nav class="tabs">
+    <button class="on">Event study</button>
+    <button onclick="location.href='rotate.html'">Rotation</button>
+  </nav>
+  <span class="pill" id="p-data">loading…</span>
+  <span class="pill" id="p-official"></span>
+  <span class="spacer"></span>
+  <button id="theme">◐</button>
+  <button id="btn-update">Update data</button>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Event criteria</h2>
+    <div id="conds"></div>
+    <button id="add-cond" style="font-size:12px;padding:4px 10px">+ Add condition</button>
+
+    <div class="opts">
+      <label class="opt">Measure returns on
+        <select id="measure"><option value="">same as condition 1</option></select></label>
+      <label class="opt">Trigger
+        <select id="mode">
+          <option value="first_entry">first entry into condition</option>
+          <option value="every_day">every qualifying day</option>
+        </select></label>
+      <label class="opt">Min gap
+        <input type="number" id="gap" value="63" min="0" step="1"> <span class="muted">trading days</span></label>
+      <label class="opt">From <input type="date" id="start"></label>
+      <label class="opt">To <input type="date" id="end"></label>
+      <span class="spacer"></span>
+      <button class="primary" id="run">Run study</button>
+      <button id="csv">Export CSV</button>
+    </div>
+
+    <div class="presets">
+      <span class="muted" style="font-size:12px;align-self:center">Presets:</span>
+      <button data-preset="semis20">Semis −20% from 52W high</button>
+      <button data-preset="spx10">S&amp;P 500 −10% from 52W high</button>
+      <button data-preset="vix30">VIX above 30</button>
+      <button data-preset="semis20spx">Semis −20% while S&amp;P 500 −10%</button>
+      <button data-preset="oil">Oil −25% from 52W high</button>
+    </div>
+    <div class="hint" id="hint"></div>
+  </div>
+
+  <div id="out"></div>
+</main>
+
+<div class="tip" id="tip"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let SERIES = [], METRICS = [], LAST = null;
+
+/* ---------- theme ---------- */
+$('#theme').onclick = () => {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : cur === 'light' ? '' : 'dark';
+  if (next) document.documentElement.setAttribute('data-theme', next);
+  else document.documentElement.removeAttribute('data-theme');
+};
+
+/* ---------- helpers ---------- */
+const pct = v => v === null || v === undefined ? '' : (v * 100).toFixed(1) + '%';
+
+/* Diverging fill anchored at zero: neg <- neutral -> pos.
+   Emitted as color-mix() against the CSS custom properties rather than a baked
+   rgb() value, so the cells restyle themselves when the theme flips (OS setting
+   or the toggle) without re-rendering the table. Saturation caps at 85% so the
+   most extreme cell in a column still holds its text legibly (measured: every
+   filled cell clears 4.5:1 against its text in both themes). */
+const CAP = 78;
+function heat(v, scale) {
+  if (v === null || v === undefined || !scale) return '';
+  const t = Math.max(-1, Math.min(1, v / scale));
+  if (!t) return '';
+  const pole = t < 0 ? '--neg' : '--pos';
+  return `color-mix(in srgb, var(${pole}) ${(Math.abs(t) * CAP).toFixed(1)}%, var(--mid))`;
+}
+
+/* ---------- condition rows ---------- */
+function seriesOptions(sel) {
+  const groups = {industry: 'GICS industries', sector: 'GICS sectors',
+                  asset_class: 'Asset classes', benchmark: 'Benchmark'};
+  let html = '';
+  for (const g of ['industry', 'sector', 'asset_class', 'benchmark']) {
+    const rows = SERIES.filter(s => s.grp === g);
+    if (!rows.length) continue;
+    html += `<optgroup label="${groups[g]}">`;
+    for (const s of rows)
+      html += `<option value="${s.id}"${s.id === sel ? ' selected' : ''}>${s.name}</option>`;
+    html += '</optgroup>';
+  }
+  return html;
+}
+function addCond(series, metric, op, value) {
+  const div = document.createElement('div');
+  div.className = 'cond';
+  div.innerHTML =
+    `<select class="series">${seriesOptions(series)}</select>
+     <select class="metric">${METRICS.map(m =>
+       `<option value="${m.id}"${m.id === metric ? ' selected' : ''}>${m.label}</option>`).join('')}</select>
+     <select class="op">${['<=', '>=', '<', '>'].map(o =>
+       `<option${o === op ? ' selected' : ''}>${o}</option>`).join('')}</select>
+     <input type="number" class="val" value="${value}" step="0.5">
+     <button class="rm" title="remove">✕</button>`;
+  div.querySelector('.rm').onclick = () => {
+    if ($('#conds').children.length > 1) div.remove();
+  };
+  $('#conds').appendChild(div);
+}
+function readConds() {
+  return [...document.querySelectorAll('.cond')].map(d => ({
+    series: d.querySelector('.series').value,
+    metric: d.querySelector('.metric').value,
+    op: d.querySelector('.op').value,
+    value: parseFloat(d.querySelector('.val').value),
+  }));
+}
+$('#add-cond').onclick = () => addCond('ac:s_p500', 'dd_52w_high', '<=', -10);
+
+/* ---------- presets ---------- */
+const PRESETS = {
+  semis20:    [['ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20]],
+  spx10:      [['ac:s_p500', 'dd_52w_high', '<=', -10]],
+  vix30:      [['ac:vix', 'price', '>=', 30]],
+  semis20spx: [['ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20],
+               ['ac:s_p500', 'dd_52w_high', '<=', -10]],
+  oil:        [['ac:oil', 'dd_52w_high', '<=', -25]],
+};
+document.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
+  $('#conds').innerHTML = '';
+  PRESETS[b.dataset.preset].forEach(c => addCond(...c));
+  $('#measure').value = '';
+  run();
+});
+
+/* ---------- run ---------- */
+function payload() {
+  return {conditions: readConds(), measure: $('#measure').value,
+          mode: $('#mode').value, min_gap: parseInt($('#gap').value || 0),
+          start: $('#start').value, end: $('#end').value};
+}
+async function run() {
+  $('#run').disabled = true;
+  $('#out').innerHTML = '<div class="card muted">Running…</div>';
+  try {
+    const r = await fetch('/api/study', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload())});
+    const j = await r.json();
+    if (!r.ok) { $('#out').innerHTML = `<div class="card err">${j.error}</div>`; return; }
+    LAST = j; render(j);
+  } catch (e) {
+    $('#out').innerHTML = `<div class="card err">${e}</div>`;
+  } finally { $('#run').disabled = false; }
+}
+$('#run').onclick = run;
+$('#csv').onclick = async () => {
+  const r = await fetch('/api/export.csv', {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload())});
+  const blob = await r.blob(), a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'event_study.csv'; a.click();
+};
+
+/* ---------- render ---------- */
+function render(j) {
+  const cols = j.cols;
+  /* "52W high" is a state reading at the event date, not a return, so it gets
+     its own header band rather than sitting under "trailing return" */
+  const state = cols.filter(c => !c.startsWith('Last') && !c.startsWith('Next') && c !== 'YTD');
+  const past = cols.filter(c => c.startsWith('Last') || c === 'YTD');
+  const fwd = cols.filter(c => c.startsWith('Next'));
+  const GAPS = new Set(['YTD', 'Next 1W']);   // vertical rules between bands
+
+  /* per-column symmetric scale anchored at 0 */
+  const scale = {};
+  for (const c of cols) {
+    let m = 0;
+    for (const e of j.events) if (e[c] != null) m = Math.max(m, Math.abs(e[c]));
+    scale[c] = m || 0.01;
+  }
+
+  const th = c => `<th class="${GAPS.has(c) ? 'gap' : ''}">${c.replace('Last ', '').replace('Next ', '')}</th>`;
+  const cellsFor = (fn) => cols.map(fn).join('');
+  const cell = (v, c, sc) =>
+    `<td class="${GAPS.has(c) ? 'gap' : ''}" style="background:${heat(v, sc[c])}">${pct(v)}</td>`;
+
+  const dataRow = (e, cls, label) =>
+    `<tr class="${cls || ''}"><td class="date">${label || e.date}` +
+    `${e.provisional ? '<span class="prov" title="includes estimated data">●</span>' : ''}</td>` +
+    cols.map(c => cell(e[c], c, scale)).join('') + '</tr>';
+
+  let rows = j.events.map(e => dataRow(e)).join('');
+  if (!j.events.length)
+    rows = `<tr><td class="date muted" colspan="${cols.length + 1}">No events matched.</td></tr>`;
+
+  /* Where things stand now. Reference only -- it is not an event, so it is
+     excluded from every statistic below, including N and the p-values. */
+  if (j.latest && !j.latest.is_event) {
+    const met = j.now && j.now.met;
+    rows += dataRow(j.latest, 'latest',
+      `${j.latest.date} <span class="tag">${met ? 'now — condition met' : 'now'}</span>`);
+  }
+
+  const statRow = (label, key, cls, sc) =>
+    `<tr class="${cls}"><td class="date">${label}</td>` +
+    cols.map(c => {
+      const v = (cls.includes('base') ? j.baseline : j.stats)[c]?.[key];
+      return key === 'n'
+        ? `<td class="${GAPS.has(c) ? 'gap' : ''}">${v ?? ''}</td>`
+        : cell(v, c, sc);
+    }).join('') + '</tr>';
+
+  /* Std dev, counts and p-values are magnitudes, not signed returns -- the
+     diverging return ramp would misrepresent them, so they stay uncoloured. */
+  const plainRow = (label, fmt, cls, title) =>
+    `<tr class="${cls}"><td class="date" ${title ? `title="${title}"` : ''}>${label}</td>` +
+    cols.map(c => {
+      const [txt, extra] = fmt(c);
+      return `<td class="${GAPS.has(c) ? 'gap' : ''}${extra || ''}">${txt}</td>`;
+    }).join('') + '</tr>';
+
+  const sdFmt = c => {
+    const v = j.stats[c]?.sd;
+    return [v == null ? '' : (v * 100).toFixed(1) + '%', ''];
+  };
+  const indepFmt = c => {
+    const v = j.independent?.[c], n = j.stats[c]?.n;
+    return [v == null ? '' : String(v), (v != null && n && v < n) ? ' warnval' : ''];
+  };
+  const pFmt = key => c => {
+    const v = j.pvals?.[c]?.[key];
+    if (v == null) return ['', ''];
+    const mark = v < 0.01 ? ' **' : v < 0.05 ? ' *' : '';
+    return [v.toFixed(3) + mark, v < 0.05 ? ' sig' : ''];
+  };
+
+  /* stats use their own scale so a single outlier event doesn't wash them out */
+  const sscale = {}, wscale = {};
+  for (const c of cols) {
+    let m = 0;
+    for (const k of ['avg', 'median', 'min', 'max']) {
+      const v = j.stats[c]?.[k]; if (v != null) m = Math.max(m, Math.abs(v));
+      const b = j.baseline[c]?.[k]; if (b != null) m = Math.max(m, Math.abs(b));
+    }
+    sscale[c] = m || 0.01; wscale[c] = 0.5;
+  }
+  const winRow = (label, cls) =>
+    `<tr class="${cls}"><td class="date">${label}</td>` +
+    cols.map(c => {
+      const v = (cls.includes('base') ? j.baseline : j.stats)[c]?.win;
+      const g = GAPS.has(c) ? 'gap' : '';
+      return `<td class="${g}" style="background:${v == null ? '' : heat(v - .5, .5)}">${v == null ? '' : (v * 100).toFixed(0) + '%'}</td>`;
+    }).join('') + '</tr>';
+
+  const nIter = j.n_iter || 2000;
+
+  const nm = j.measure.name || j.measure_id;
+  $('#out').innerHTML = `
+    <div class="card">
+      <div class="hero"><span class="n">${j.n_events}</span>
+        <span class="lbl">events — returns measured on <b>${nm}</b>
+        <span class="muted">(${j.measure.ticker || ''})</span></span></div>
+      <svg id="chart"></svg>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--accent)"></span>${nm} index level (log scale)</span>
+        <span><span class="sw" style="background:var(--neg);border-radius:50%"></span>event date</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Event returns</h2>
+      <div class="scroll"><table>
+        <thead>
+          <tr class="grp"><th class="date"></th>
+            ${state.length ? `<th colspan="${state.length}">At event date</th>` : ''}
+            <th colspan="${past.length}" class="gap">Return to event date (trailing)</th>
+            <th colspan="${fwd.length}" class="gap">Forward return from event date</th></tr>
+          <tr class="hdr"><th class="date">Date</th>${cols.map(th).join('')}</tr>
+        </thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          ${statRow('Average', 'avg', 'stat sep', sscale)}
+          ${statRow('Median', 'median', 'stat', sscale)}
+          ${statRow('Min', 'min', 'stat', sscale)}
+          ${statRow('Max', 'max', 'stat', sscale)}
+          ${winRow('Win rate', 'stat')}
+          ${plainRow('Std dev', sdFmt, 'stat', 'Dispersion of the event returns')}
+          ${statRow('N', 'n', 'stat', sscale)}
+          ${plainRow('N independent', indepFmt, 'stat',
+            'Events whose windows at this horizon do not overlap each other')}
+          ${plainRow('p — average', pFmt('avg'), 'sigrow sep',
+            'Two-sided placebo p-value')}
+          ${plainRow('p — median', pFmt('median'), 'sigrow', 'Two-sided placebo p-value')}
+          ${plainRow('p — win rate', pFmt('win'), 'sigrow', 'Two-sided placebo p-value')}
+          ${statRow('All-history average', 'avg', 'base sep', sscale)}
+          ${statRow('All-history median', 'median', 'base', sscale)}
+          ${winRow('All-history win rate', 'base')}
+        </tfoot>
+      </table></div>
+      <div class="legend">
+        <span><span class="ramp"></span> negative → 0 → positive (each column scaled to its own range)</span>
+        <span><span class="prov">●</span> includes estimated (proxy-bridged) data</span>
+        <span><span class="tag">now</span> latest date — reference only, excluded from every statistic below</span>
+      </div>
+      <div class="hint">
+        <b>p-values</b> come from a placebo test: the whole run of event dates is slid
+        to ${nIter.toLocaleString()} evenly spaced points across history (wrapping around), which keeps both the
+        spacing between events and the autocorrelation of returns intact. The value is
+        how often a random placement lands at least as far from centre as this one, so
+        it answers “could these dates have done this by chance?”.
+        <b>*</b> p&lt;0.05, <b>**</b> p&lt;0.01.
+        A plain t-test would be far too generous here, because overlapping return
+        windows make the observations dependent — see <b>N independent</b>, which counts
+        how many events at each horizon do not share price history with another event.
+        Where that is much smaller than N, treat even a low p-value with care.
+      </div>
+    </div>`;
+
+  drawChart(j);
+}
+
+/* ---------- chart: log-scale line + event markers ---------- */
+function drawChart(j) {
+  const svg = $('#chart'), c = j.chart;
+  if (!c.dates.length) return;
+  const W = svg.clientWidth || 900, H = 230, m = {t: 10, r: 12, b: 22, l: 52};
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const xs = c.dates.map(d => +new Date(d));
+  const x0 = xs[0], x1 = xs[xs.length - 1];
+  const vals = c.levels.filter(v => v > 0);
+  const lo = Math.log10(Math.min(...vals)), hi = Math.log10(Math.max(...vals));
+  const X = t => m.l + (t - x0) / (x1 - x0) * iw;
+  const Y = v => m.t + ih - (Math.log10(v) - lo) / (hi - lo) * ih;
+
+  let d = '';
+  for (let i = 0; i < xs.length; i++) {
+    if (c.levels[i] <= 0) continue;
+    d += (d ? 'L' : 'M') + X(xs[i]).toFixed(1) + ' ' + Y(c.levels[i]).toFixed(1);
+  }
+  const lvlAt = t => {
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < xs.length; i++) { const dd = Math.abs(xs[i] - t); if (dd < bd) { bd = dd; best = i; } }
+    return best;
+  };
+  const ticks = [];
+  const years = new Date(x1).getFullYear() - new Date(x0).getFullYear();
+  const stepY = years > 60 ? 10 : years > 30 ? 5 : years > 12 ? 2 : 1;
+  for (let y = Math.ceil(new Date(x0).getFullYear() / stepY) * stepY;
+       y <= new Date(x1).getFullYear(); y += stepY) {
+    const t = +new Date(y + '-01-01'); if (t >= x0 && t <= x1) ticks.push([t, y]);
+  }
+  const yt = [];
+  for (let e = Math.ceil(lo); e <= Math.floor(hi); e++) yt.push(Math.pow(10, e));
+
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML =
+    yt.map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"
+        stroke="var(--border)" stroke-width="1"/>
+      <text x="${m.l - 7}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="10"
+        fill="var(--text-muted)">${v >= 1000 ? (v / 1000) + 'k' : v}</text>`).join('') +
+    ticks.map(([t, y]) => `<text x="${X(t).toFixed(1)}" y="${H - 6}" text-anchor="middle"
+        font-size="10" fill="var(--text-muted)">${y}</text>`).join('') +
+    `<path d="${d}" fill="none" stroke="var(--accent)" stroke-width="2"
+       stroke-linejoin="round" stroke-linecap="round"/>` +
+    c.events.map(ds => {
+      const t = +new Date(ds), i = lvlAt(t);
+      if (t < x0 || t > x1 || c.levels[i] <= 0) return '';
+      return `<circle cx="${X(t).toFixed(1)}" cy="${Y(c.levels[i]).toFixed(1)}" r="4.5"
+        fill="var(--neg)" stroke="var(--surface-1)" stroke-width="2"><title>${ds}</title></circle>`;
+    }).join('') +
+    `<line id="cross" y1="${m.t}" y2="${m.t + ih}" stroke="var(--border-strong)"
+       stroke-width="1" style="display:none"/>`;
+
+  const tip = $('#tip'), cross = svg.querySelector('#cross');
+  svg.onmousemove = ev => {
+    const r = svg.getBoundingClientRect();
+    const px = (ev.clientX - r.left) * (W / r.width);
+    if (px < m.l || px > W - m.r) { tip.style.display = 'none'; cross.style.display = 'none'; return; }
+    const t = x0 + (px - m.l) / iw * (x1 - x0), i = lvlAt(t);
+    cross.style.display = ''; cross.setAttribute('x1', X(xs[i])); cross.setAttribute('x2', X(xs[i]));
+    tip.style.display = 'block';
+    tip.innerHTML = `<b>${c.dates[i]}</b><br>${c.levels[i].toLocaleString(undefined, {maximumFractionDigits: 2})}`;
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 130) + 'px';
+    tip.style.top = (ev.clientY - 10) + 'px';
+  };
+  svg.onmouseleave = () => { tip.style.display = 'none'; cross.style.display = 'none'; };
+}
+
+/* the chart is sized from its measured width, so it has to be redrawn -- not
+   just rescaled -- when the viewport changes, or the axis labels shrink with it */
+let rzTimer;
+addEventListener('resize', () => {
+  clearTimeout(rzTimer);
+  rzTimer = setTimeout(() => { if (LAST && document.querySelector('#chart')) drawChart(LAST); }, 150);
+});
+
+/* ---------- status / update ---------- */
+async function status() {
+  const s = await (await fetch('/api/status')).json();
+  $('#p-data').innerHTML = `data through <b>${s.data_through || '—'}</b>`;
+  $('#p-official').innerHTML =
+    `Bloomberg workbook through <b>${s.bbg_through || '—'}</b>` +
+    (s.official_through && s.official_through !== s.bbg_through
+      ? ` · S&amp;P DJI official through <b>${s.official_through}</b>` : '') +
+    (s.series_bridged ? ` · ${s.series_bridged} series bridged` : '') +
+    (s.gap_series ? ` · <b style="color:#e8a317" title="The S&amp;P 1500 industry/sector indices can only be captured one close per day from Yahoo, so days between the last Bloomberg export and the first daily capture are missing. Refresh the Bloomberg workbook in Downloads to fill them with official data.">⚠ ${s.gap_series} series missing up to ${s.gap_sessions} sessions — refresh the Bloomberg workbook</b>` : '');
+  $('#btn-update').disabled = s.updating;
+  $('#btn-update').textContent = s.updating ? 'Updating…' : 'Update data';
+  if (s.updating) setTimeout(status, 3000);
+  return s;
+}
+$('#btn-update').onclick = async () => {
+  await fetch('/api/update', {method: 'POST'});
+  setTimeout(status, 800);
+};
+
+/* ---------- boot ---------- */
+(async () => {
+  [SERIES, METRICS] = await Promise.all([
+    (await fetch('/api/series')).json(),
+    (await fetch('/api/metrics')).json(),
+  ]);
+  $('#measure').innerHTML = '<option value="">same as condition 1</option>' + seriesOptions();
+  addCond('ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20);
+  $('#hint').textContent =
+    'Percentages are entered as numbers: −20 means 20% below the 52-week high. ' +
+    'Multiple conditions are combined with AND. "Min gap" suppresses re-triggers within N trading days ' +
+    'so one drawdown episode counts once.';
+  await status();
+  run();
+})();
+</script>
+</body>
+</html>

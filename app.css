@@ -1,0 +1,129 @@
+/* Shared by index.html and rotate.html -- edit here, not per page. */
+:root{
+  color-scheme: light;
+  --surface-0:#f5f4f1; --surface-1:#fcfcfb; --surface-2:#efeee9;
+  --border:#dcdad3; --border-strong:#c2bfb5;
+  --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#7a786f;
+  /* diverging pair for returns: red (loss) <-> teal (gain), neutral gray at 0.
+     Plain red/green measures CVD deltaE 4.1 (indistinguishable to deuteranopes);
+     this teal keeps the "green = up" read and measures 11.0. Every cell also
+     prints its signed value, so color is never the only channel. */
+  --accent:#2a78d6; --accent-solid:#1f66c2;
+  --neg:#d03b3b; --pos:#0d9488; --mid:#f0efec;
+  --warn:#fab219; --warn-ink:#8a5a00;
+}
+@media (prefers-color-scheme: dark){
+  :root:where(:not([data-theme="light"])){
+    color-scheme: dark;
+    --surface-0:#131312; --surface-1:#1a1a19; --surface-2:#232322;
+    --border:#33332f; --border-strong:#4a4a45;
+    --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#8f8e85;
+    --warn-ink:#fab219;
+    --accent:#3987e5; --accent-solid:#1f66c2;
+    --neg:#d03b3b; --pos:#0d9488; --mid:#383835;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --surface-0:#131312; --surface-1:#1a1a19; --surface-2:#232322;
+  --border:#33332f; --border-strong:#4a4a45;
+  --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#8f8e85;
+  --warn-ink:#fab219;
+  --accent:#3987e5; --accent-solid:#1f66c2;
+  --neg:#d03b3b; --pos:#0d9488; --mid:#383835;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--surface-0);color:var(--text-primary);
+  font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:12px 20px;background:var(--surface-1);border-bottom:1px solid var(--border)}
+h1{font-size:16px;margin:0;font-weight:650;letter-spacing:-.01em}
+.pill{font-size:12px;color:var(--text-secondary);background:var(--surface-2);
+  border:1px solid var(--border);border-radius:999px;padding:3px 10px;white-space:nowrap}
+.pill b{color:var(--text-primary);font-weight:600}
+.spacer{flex:1}
+button{font:inherit;font-size:13px;padding:6px 14px;border-radius:7px;
+  border:1px solid var(--border-strong);background:var(--surface-2);
+  color:var(--text-primary);cursor:pointer}
+button:hover{background:var(--surface-1)}
+button.primary{background:var(--accent-solid);border-color:var(--accent-solid);
+  color:#fff;font-weight:600}
+button.primary:hover{filter:brightness(1.08)}
+button:disabled{opacity:.5;cursor:not-allowed}
+main{padding:16px 20px 40px;max-width:100%}
+.card{background:var(--surface-1);border:1px solid var(--border);
+  border-radius:10px;padding:14px 16px;margin-bottom:16px}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--text-muted);margin:0 0 10px;font-weight:600}
+select,input{font:inherit;font-size:13px;padding:5px 8px;border-radius:6px;
+  border:1px solid var(--border-strong);background:var(--surface-1);color:var(--text-primary)}
+input[type=number]{width:88px}
+input[type=date]{width:140px}
+.cond{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.cond select.series{min-width:270px}
+.cond select.metric{min-width:220px}
+.cond .rm{padding:4px 9px;line-height:1;color:var(--text-secondary)}
+.opts{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-top:12px;
+  padding-top:12px;border-top:1px solid var(--border)}
+.opt{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--text-secondary)}
+.presets{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.presets button{font-size:12px;padding:4px 10px;border-radius:999px;color:var(--text-secondary)}
+.hint{font-size:12px;color:var(--text-muted);margin-top:8px}
+.hero{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+.hero .n{font-size:30px;font-weight:680;letter-spacing:-.02em}
+.hero .lbl{font-size:13px;color:var(--text-secondary)}
+.scroll{overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:var(--surface-1)}
+table{border-collapse:separate;border-spacing:0;font-variant-numeric:tabular-nums;
+  font-size:12.5px;white-space:nowrap;min-width:100%}
+th,td{padding:4px 9px;text-align:right;border-bottom:1px solid var(--border)}
+th{background:var(--surface-2);color:var(--text-secondary);font-weight:600;
+  position:sticky;top:0;z-index:2}
+/* secondary rather than muted ink: at 11px uppercase on the header surface the
+   muted token measures 3.81:1, under the 4.5:1 needed for text this size */
+thead tr.grp th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--text-secondary);top:0}
+thead tr.hdr th{top:25px}
+td.date,th.date{text-align:left;position:sticky;left:0;background:var(--surface-1);
+  z-index:1;border-right:1px solid var(--border)}
+th.date{background:var(--surface-2);z-index:3}
+tbody tr:hover td{filter:brightness(.97)}
+tr.sep td,tr.sep th{border-top:2px solid var(--border-strong)}
+tr.stat td,tr.stat th{font-weight:600;background:var(--surface-2)}
+/* the "now" row is a reference point, not an event -- ruled off from the event
+   list above it and excluded from every statistic below */
+tr.latest td{border-top:2px solid var(--border-strong);border-bottom:none}
+tr.latest td.date{font-weight:600}
+.tag{font-size:10px;text-transform:uppercase;letter-spacing:.05em;font-weight:700;
+  border:1px solid var(--border-strong);border-radius:999px;padding:1px 6px;
+  margin-left:6px;color:var(--text-secondary);vertical-align:1px}
+tr.sigrow td{background:var(--surface-1);color:var(--text-secondary)}
+tr.sigrow td.date{color:var(--text-secondary)}
+tr.sigrow td.sig{color:var(--text-primary);font-weight:700}
+/* "fewer independent events than N" is emphasised with weight, not the amber
+   token -- that hue is sub-3:1 on the light surface and would carry the meaning
+   on colour alone. The row sits directly under N, so the comparison is visible. */
+td.warnval{color:var(--text-primary);font-weight:700}
+/* baseline rows read as secondary via their label, not via dimmed numerals --
+   dimmed text over a filled heat cell drops below 4.5:1 in dark mode */
+tr.base td.date{color:var(--text-secondary)}
+tr.base td,tr.base th{background:var(--surface-1)}
+.gap{border-left:1px solid var(--border-strong)}
+.prov{color:var(--warn-ink);font-weight:700;margin-left:4px}
+.err{color:var(--neg);font-size:13px}
+.legend{display:flex;gap:14px;align-items:center;font-size:12px;
+  color:var(--text-secondary);margin-top:10px;flex-wrap:wrap}
+.sw{display:inline-block;width:11px;height:11px;border-radius:3px;
+  margin-right:5px;vertical-align:-1px}
+.ramp{display:inline-block;width:120px;height:10px;border-radius:3px;vertical-align:-1px;
+  background:linear-gradient(90deg,var(--neg),var(--mid),var(--pos))}
+#chart{width:100%;height:230px;display:block}
+.tip{position:fixed;pointer-events:none;background:var(--surface-1);
+  border:1px solid var(--border-strong);border-radius:7px;padding:6px 9px;
+  font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.16);z-index:50;display:none}
+.muted{color:var(--text-muted)}
+
+/* page nav (shared by both pages) */
+.tabs{display:flex;gap:6px;flex-wrap:wrap}
+.tabs button{border-radius:8px}
+.tabs button.on{background:var(--accent-solid);border-color:var(--accent-solid);
+  color:#fff;font-weight:600}

@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rotation — what to own after the event</title>
+<link rel="stylesheet" href="app.css">
+<style>
+/* .tabs lives in app.css -- only the results-table spacing is page-specific */
+#out .tabs{margin-bottom:12px}
+td.name,th.name{text-align:left;position:sticky;left:0;background:var(--surface-1);
+  z-index:1;border-right:1px solid var(--border);max-width:290px;overflow:hidden;
+  text-overflow:ellipsis}
+th.name{background:var(--surface-2);z-index:3}
+td.rank{text-align:right;color:var(--text-secondary);width:34px}
+tr.self td{outline:2px solid var(--accent);outline-offset:-2px}
+tr.self td.name{font-weight:700}
+/* the sector's own index, heading the industries that belong to it */
+tr.secrow td{border-top:2px solid var(--border-strong);font-weight:700}
+tr.secrow td.name{background:var(--surface-2);text-transform:uppercase;
+  font-size:11px;letter-spacing:.04em}
+th.sortcol,td.sortcol{box-shadow:inset 0 0 0 1px var(--border-strong)}
+.sub{font-size:11px;color:var(--text-muted);display:block;font-weight:400}
+</style>
+<script src="site.js"></script>
+<style>#btn-update{display:none}</style>
+</head>
+<body>
+<header>
+  <h1>Rotation</h1>
+  <nav class="tabs" style="margin:0">
+    <button onclick="location.href='./'">Event study</button>
+    <button class="on">Rotation</button>
+  </nav>
+  <span class="pill" id="p-data">loading…</span>
+  <span class="spacer"></span>
+  <button id="theme">◐</button>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Event criteria</h2>
+    <div id="conds"></div>
+    <button id="add-cond" style="font-size:12px;padding:4px 10px">+ Add condition</button>
+    <div class="opts">
+      <label class="opt">Trigger
+        <select id="mode">
+          <option value="first_entry">first entry into condition</option>
+          <option value="every_day">every qualifying day</option>
+        </select></label>
+      <label class="opt">Min gap
+        <input type="number" id="gap" value="63" min="0" step="1"> <span class="muted">trading days</span></label>
+      <label class="opt">From <input type="date" id="start"></label>
+      <label class="opt">To <input type="date" id="end"></label>
+      <span class="spacer"></span>
+      <button class="primary" id="run">Run</button>
+      <button id="csv">Export CSV</button>
+    </div>
+    <div class="presets">
+      <span class="muted" style="font-size:12px;align-self:center">Presets:</span>
+      <button data-preset="semis20">Semis −20% from 52W high</button>
+      <button data-preset="spx10">S&amp;P 500 −10% from 52W high</button>
+      <button data-preset="vix30">VIX above 30</button>
+      <button data-preset="oil">Oil −25% from 52W high</button>
+    </div>
+    <div class="hint">Forward returns for every series in the universe, measured from
+      the same event dates. Each series is measured on its own calendar, so one that
+      did not exist yet simply has fewer observations — always read <b>N</b> before
+      trusting a row.</div>
+  </div>
+
+  <div id="out"></div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+let SERIES = [], METRICS = [], LAST = null;
+let TAB = 'industry', SORT_COL = 'Next 3M', SORT_STAT = 'avg', MIN_N = null;
+let BY_SECTOR = true;   // industries grouped under their GICS sector
+
+$('#theme').onclick = () => {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : cur === 'light' ? '' : 'dark';
+  if (next) document.documentElement.setAttribute('data-theme', next);
+  else document.documentElement.removeAttribute('data-theme');
+};
+
+const pct = v => v == null ? '' : (v * 100).toFixed(1) + '%';
+const CAP = 78;
+function heat(v, scale) {
+  if (v == null || !scale) return '';
+  const t = Math.max(-1, Math.min(1, v / scale));
+  if (!t) return '';
+  return `color-mix(in srgb, var(${t < 0 ? '--neg' : '--pos'}) ${(Math.abs(t) * CAP).toFixed(1)}%, var(--mid))`;
+}
+
+/* ---------- condition rows (same contract as the study page) ---------- */
+function seriesOptions(sel) {
+  const groups = {industry: 'GICS industries', sector: 'GICS sectors',
+                  asset_class: 'Asset classes', benchmark: 'Benchmark'};
+  let html = '';
+  for (const g of ['industry', 'sector', 'asset_class', 'benchmark']) {
+    const rows = SERIES.filter(s => s.grp === g);
+    if (!rows.length) continue;
+    html += `<optgroup label="${groups[g]}">`;
+    for (const s of rows)
+      html += `<option value="${s.id}"${s.id === sel ? ' selected' : ''}>${s.name}</option>`;
+    html += '</optgroup>';
+  }
+  return html;
+}
+function addCond(series, metric, op, value) {
+  const div = document.createElement('div');
+  div.className = 'cond';
+  div.innerHTML =
+    `<select class="series">${seriesOptions(series)}</select>
+     <select class="metric">${METRICS.map(m =>
+       `<option value="${m.id}"${m.id === metric ? ' selected' : ''}>${m.label}</option>`).join('')}</select>
+     <select class="op">${['<=', '>=', '<', '>'].map(o =>
+       `<option${o === op ? ' selected' : ''}>${o}</option>`).join('')}</select>
+     <input type="number" class="val" value="${value}" step="0.5">
+     <button class="rm" title="remove">✕</button>`;
+  div.querySelector('.rm').onclick = () => {
+    if ($('#conds').children.length > 1) div.remove();
+  };
+  $('#conds').appendChild(div);
+}
+const readConds = () => [...document.querySelectorAll('.cond')].map(d => ({
+  series: d.querySelector('.series').value,
+  metric: d.querySelector('.metric').value,
+  op: d.querySelector('.op').value,
+  value: parseFloat(d.querySelector('.val').value),
+}));
+$('#add-cond').onclick = () => addCond('ac:s_p500', 'dd_52w_high', '<=', -10);
+
+const PRESETS = {
+  semis20: [['ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20]],
+  spx10:   [['ac:s_p500', 'dd_52w_high', '<=', -10]],
+  vix30:   [['ac:vix', 'price', '>=', 30]],
+  oil:     [['ac:oil', 'dd_52w_high', '<=', -25]],
+};
+document.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
+  $('#conds').innerHTML = '';
+  PRESETS[b.dataset.preset].forEach(c => addCond(...c));
+  run();
+});
+
+const payload = () => ({conditions: readConds(), mode: $('#mode').value,
+  min_gap: parseInt($('#gap').value || 0), start: $('#start').value, end: $('#end').value});
+
+async function run() {
+  $('#run').disabled = true;
+  $('#out').innerHTML = '<div class="card muted">Measuring every series…</div>';
+  try {
+    const r = await fetch('/api/rotate', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload())});
+    const j = await r.json();
+    if (!r.ok) { $('#out').innerHTML = `<div class="card err">${j.error}</div>`; return; }
+    LAST = j;
+    /* A series that only covers a handful of the events can top the ranking on
+       noise alone, so default to requiring half the event count. */
+    MIN_N = Math.max(3, Math.round(j.n_events / 2));
+    render();
+  } catch (e) {
+    $('#out').innerHTML = `<div class="card err">${e}</div>`;
+  } finally { $('#run').disabled = false; }
+}
+$('#run').onclick = run;
+$('#csv').onclick = async () => {
+  const r = await fetch('/api/rotate.csv', {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload())});
+  const blob = await r.blob(), a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'rotation.csv'; a.click();
+};
+
+/* ---------- render ---------- */
+const GROUPS = [['industry', 'Industries'], ['sector', 'Sectors'],
+                ['asset_class', 'Asset classes']];
+const STATS = [['avg', 'Average return'], ['median', 'Median return'], ['win', 'Win rate']];
+
+function render() {
+  const j = LAST;
+  if (!j) return;
+  const cols = j.cols;
+  const condIds = new Set(readConds().map(c => c.series));
+  const inTab = j.rows.filter(r => r.grp === TAB);
+  const rows = inTab.filter(r => (r.stats[SORT_COL]?.n ?? 0) >= MIN_N);
+  const hidden = inTab.length - rows.length;
+
+  rows.sort((a, b) => {
+    const x = a.stats[SORT_COL]?.[SORT_STAT], y = b.stats[SORT_COL]?.[SORT_STAT];
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return y - x;
+  });
+
+  /* one scale per stat-block per column, so a column is comparable down its own
+     length; win rate diverges around 50%, returns around 0 */
+  const scale = {};
+  for (const [key] of STATS) for (const c of cols) {
+    let m = 0;
+    for (const r of rows) {
+      const v = r.stats[c]?.[key];
+      if (v != null) m = Math.max(m, Math.abs(key === 'win' ? v - .5 : v));
+    }
+    scale[key + '|' + c] = m || 0.01;
+  }
+
+  const shortLbl = c => c.replace('Next ', '');
+  const cell = (r, key, c) => {
+    const v = r.stats[c]?.[key];
+    const isSort = (key === SORT_STAT && c === SORT_COL);
+    const bg = heat(key === 'win' ? (v == null ? null : v - .5) : v, scale[key + '|' + c]);
+    const txt = v == null ? '' : (key === 'win' ? (v * 100).toFixed(0) + '%' : pct(v));
+    return `<td class="${c === 'Next 1W' ? 'gap' : ''}${isSort ? ' sortcol' : ''}"
+      style="background:${bg}">${txt}</td>`;
+  };
+
+  const line = (r, rankTxt, cls, label) => `<tr class="${cls}">
+      <td class="rank">${rankTxt}</td>
+      <td class="name" title="${r.ticker || ''}">${label ?? r.name}</td>
+      <td>${r.stats[SORT_COL]?.n ?? 0}</td>
+      ${STATS.map(([key]) => cols.map(c => cell(r, key, c)).join('')).join('')}
+    </tr>`;
+
+  const grouped = TAB === 'industry' && BY_SECTOR;
+  let body;
+  if (grouped) {
+    /* Each sector's own index leads its industries, so an industry can be read
+       against the sector it belongs to rather than only against the field. */
+    const sectorRow = new Map(j.rows.filter(r => r.grp === 'sector').map(r => [r.name, r]));
+    const buckets = new Map();
+    for (const r of rows) {
+      const k = r.sector || '—';
+      if (!buckets.has(k)) buckets.set(k, []);
+      buckets.get(k).push(r);
+    }
+    const sectorVal = s => sectorRow.get(s)?.stats[SORT_COL]?.[SORT_STAT] ?? null;
+    const order = [...buckets.keys()].sort((a, b) => {
+      const x = sectorVal(a), y = sectorVal(b);
+      if (x == null && y == null) return a.localeCompare(b);
+      if (x == null) return 1;
+      if (y == null) return -1;
+      return y - x;
+    });
+    body = order.map(sec => {
+      const head = sectorRow.get(sec);
+      const kids = buckets.get(sec)
+        .map((r, i) => line(r, i + 1, condIds.has(r.id) ? 'self' : '')).join('');
+      return (head ? line(head, '', 'secrow', sec + ' — sector') :
+        `<tr class="secrow"><td class="rank"></td><td class="name">${sec}</td>
+         <td colspan="${cols.length * 3 + 1}"></td></tr>`) + kids;
+    }).join('');
+  } else {
+    body = rows.map((r, i) => line(r, i + 1, condIds.has(r.id) ? 'self' : '',
+      r.grp === 'industry' && r.sector
+        ? `${r.name}<span class="sub">${r.sector}</span>` : undefined)).join('');
+  }
+
+  const sortOpts = cols.map(c =>
+    `<option value="${c}"${c === SORT_COL ? ' selected' : ''}>${shortLbl(c)}</option>`).join('');
+  const statOpts = STATS.map(([k, lbl]) =>
+    `<option value="${k}"${k === SORT_STAT ? ' selected' : ''}>${lbl}</option>`).join('');
+
+  $('#out').innerHTML = `
+    <div class="card">
+      <div class="hero"><span class="n">${j.n_events}</span>
+        <span class="lbl">events${j.dates.length ?
+          ` — ${j.dates[0]} to ${j.dates[j.dates.length - 1]}` : ''}${
+          j.now && j.now.met ? ' · <b>condition holds today</b>' : ''}</span></div>
+      <div class="tabs">
+        ${GROUPS.map(([g, lbl]) => `<button data-tab="${g}" class="${g === TAB ? 'on' : ''}">${lbl} (${
+          j.rows.filter(r => r.grp === g).length})</button>`).join('')}
+        <span class="spacer"></span>
+        ${TAB === 'industry' ? `<label class="opt"><input type="checkbox" id="bysec"
+          ${BY_SECTOR ? 'checked' : ''} style="width:auto"> group by sector</label>` : ''}
+        <label class="opt">Min N <input type="number" id="minn" value="${MIN_N}" min="0"
+          step="1" style="width:64px"></label>
+        <label class="opt">Rank by
+          <select id="sortstat">${statOpts}</select>
+          <select id="sortcol">${sortOpts}</select></label>
+      </div>
+      ${hidden ? `<div class="hint" style="margin:0 0 8px">${hidden} of ${inTab.length}
+        hidden — fewer than ${MIN_N} events at ${shortLbl(SORT_COL)}, usually because the
+        series began later than the earliest event.</div>` : ''}
+      <div class="scroll"><table>
+        <thead>
+          <tr class="grp"><th class="rank"></th><th class="name"></th><th></th>
+            ${STATS.map(([, lbl]) => `<th colspan="${cols.length}" class="gap">${lbl}</th>`).join('')}</tr>
+          <tr class="hdr"><th class="rank">#</th><th class="name">Series</th>
+            <th title="Events with data at this horizon">N</th>
+            ${STATS.map(() => cols.map(c =>
+              `<th class="${c === 'Next 1W' ? 'gap' : ''}">${shortLbl(c)}</th>`).join('')).join('')}</tr>
+        </thead>
+        <tbody>${body || `<tr><td colspan="99" class="muted">No rows.</td></tr>`}</tbody>
+      </table></div>
+      <div class="legend">
+        <span><span class="ramp"></span> returns diverge around 0, win rate around 50%</span>
+        <span>N is for the ranked horizon and varies by series</span>
+        <span style="outline:2px solid var(--accent);padding:1px 5px">outlined</span>
+        <span>= the series the event is defined on</span>
+      </div>
+    </div>`;
+
+  $('#out').querySelectorAll('[data-tab]').forEach(b =>
+    b.onclick = () => { TAB = b.dataset.tab; render(); });
+  $('#sortcol').onchange = e => { SORT_COL = e.target.value; render(); };
+  $('#sortstat').onchange = e => { SORT_STAT = e.target.value; render(); };
+  $('#minn').onchange = e => { MIN_N = parseInt(e.target.value || 0); render(); };
+  const bs = $('#bysec');
+  if (bs) bs.onchange = e => { BY_SECTOR = e.target.checked; render(); };
+}
+
+(async () => {
+  [SERIES, METRICS] = await Promise.all([
+    (await fetch('/api/series')).json(),
+    (await fetch('/api/metrics')).json(),
+  ]);
+  const s = await (await fetch('/api/status')).json();
+  $('#p-data').innerHTML = `data through <b>${s.data_through || '—'}</b>` +
+    (s.gap_series ? ` · <b style="color:#e8a317" title="Days between the last Bloomberg export and the first daily Yahoo capture are missing for these series. Refresh the Bloomberg workbook in Downloads.">⚠ ${s.gap_series} series missing up to ${s.gap_sessions} sessions</b>` : '');
+  addCond('ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20);
+  run();
+})();
+</script>
+</body>
+</html>
