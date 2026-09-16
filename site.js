@@ -26,7 +26,9 @@ async function loadBlob() {
   const r = await fetch('data.bin', {cache: 'no-cache'});
   if (!r.ok) throw new Error('data.bin: HTTP ' + r.status);
   const buf = new Uint8Array(await r.arrayBuffer());
-  if (String.fromCharCode(...buf.slice(0, 4)) !== 'ESD1') throw new Error('unexpected data format');
+  const magic = String.fromCharCode(...buf.slice(0, 4));
+  if (magic === 'ESD0') return {open: true, gz: buf.slice(4)};   // published without a password
+  if (magic !== 'ESD1') throw new Error('unexpected data format');
   const dv = new DataView(buf.buffer);
   return {salt: buf.slice(4, 20), iv: buf.slice(20, 32), iter: dv.getUint32(32), ct: buf.slice(36)};
 }
@@ -37,12 +39,16 @@ async function deriveKey(password, salt, iter) {
   return crypto.subtle.deriveBits({name: 'PBKDF2', hash: 'SHA-256', salt, iterations: iter}, base, 256);
 }
 
+async function inflate(bytes) {
+  const text = await new Response(new Blob([bytes]).stream()
+    .pipeThrough(new DecompressionStream('gzip'))).text();
+  return JSON.parse(text);
+}
+
 async function openWith(rawKey, blob) {
   const key = await crypto.subtle.importKey('raw', rawKey, 'AES-GCM', false, ['decrypt']);
   const plain = await crypto.subtle.decrypt({name: 'AES-GCM', iv: blob.iv}, key, blob.ct);
-  const text = await new Response(new Blob([plain]).stream()
-    .pipeThrough(new DecompressionStream('gzip'))).text();
-  return JSON.parse(text);
+  return inflate(plain);
 }
 
 function gateUI() {
@@ -80,6 +86,12 @@ async function unlock() {
   let blob;
   try { blob = await loadBlob(); }
   catch (e) { rejectReady(e); return; }
+
+  if (blob.open) {                       // no password on this build
+    try { DATA = await inflate(blob.gz); prepare(); resolveReady(); }
+    catch (e) { rejectReady(e); }
+    return;
+  }
 
   for (const store of [sessionStorage, localStorage]) {          // remembered key
     const k = store.getItem(KEY_STORE);
