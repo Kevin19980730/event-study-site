@@ -79,10 +79,11 @@ const pct = v => v === null || v === undefined ? '' : (v * 100).toFixed(1) + '%'
 /* Diverging fill anchored at zero: neg <- neutral -> pos.
    Emitted as color-mix() against the CSS custom properties rather than a baked
    rgb() value, so the cells restyle themselves when the theme flips (OS setting
-   or the toggle) without re-rendering the table. Saturation caps at 85% so the
-   most extreme cell in a column still holds its text legibly (measured: every
-   filled cell clears 4.5:1 against its text in both themes). */
-const CAP = 78;
+   or the toggle) without re-rendering the table. Saturation caps at 60% so the
+   most extreme cell in a column still holds its text legibly: on the terminal
+   ground the strongest cell measures 5.3:1 (loss) and 4.9:1 (gain) against the
+   text, and 78% -- the old cap, set for the light sheet -- fell to 3.5:1. */
+const CAP = 60;
 function heat(v, scale) {
   if (v === null || v === undefined || !scale) return '';
   const t = Math.max(-1, Math.min(1, v / scale));
@@ -417,7 +418,7 @@ async function status() {
     (s.official_through && s.official_through !== s.bbg_through
       ? ` · S&amp;P DJI official through <b>${s.official_through}</b>` : '') +
     (s.series_bridged ? ` · ${s.series_bridged} series bridged` : '') +
-    (s.gap_series ? ` · <b style="color:#e8a317" title="The S&amp;P 1500 industry/sector indices can only be captured one close per day from Yahoo, so days between the last Bloomberg export and the first daily capture are missing. Refresh the Bloomberg workbook in Downloads to fill them with official data.">⚠ ${s.gap_series} series missing up to ${s.gap_sessions} sessions — refresh the Bloomberg workbook</b>` : '');
+    (s.gap_series ? ` · <b class="prov" title="The S&amp;P 1500 industry/sector indices can only be captured one close per day from Yahoo, so days between the last Bloomberg export and the first daily capture are missing. Refresh the Bloomberg workbook in Downloads to fill them with official data.">⚠ ${s.gap_series} series missing up to ${s.gap_sessions} sessions — refresh the Bloomberg workbook</b>` : '');
   $('#btn-update').disabled = s.updating;
   $('#btn-update').textContent = s.updating ? 'Updating…' : 'Update data';
   if (s.updating) setTimeout(status, 3000);

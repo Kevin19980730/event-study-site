@@ -57,17 +57,20 @@ function gateUI() {
   wrap.innerHTML = `
     <style>
       #gate{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;
-        background:var(--bg,#f7f7f5);font:14px system-ui,-apple-system,"Segoe UI",sans-serif}
-      #gate form{background:var(--surface-1,#fff);border:1px solid var(--border,#ddd);border-radius:10px;
-        padding:26px 28px;width:min(360px,90vw);box-shadow:0 10px 40px rgba(0,0,0,.08)}
-      #gate h2{margin:0 0 6px;font-size:18px}
+        background:var(--surface-0,#000);color:var(--text-primary,#e8e6e0);
+        font:14px ui-monospace,"Cascadia Mono",Consolas,monospace}
+      #gate form{background:var(--surface-1,#0a0a0a);border:1px solid var(--border,#2a2a24);border-radius:4px;
+        padding:26px 28px;width:min(360px,90vw);box-shadow:0 10px 40px rgba(0,0,0,.6)}
+      #gate h2{margin:0 0 6px;font-size:15px;letter-spacing:.12em;text-transform:uppercase;
+        color:var(--accent,#ffae00)}
       #gate p{margin:0 0 16px;color:var(--text-muted,#777);font-size:13px;line-height:1.45}
       #gate input[type=password]{width:100%;box-sizing:border-box;padding:9px 11px;font-size:15px;
-        border:1px solid var(--border,#ccc);border-radius:6px;margin-bottom:10px}
+        border:1px solid var(--border-strong,#3d3d33);border-radius:3px;margin-bottom:10px;
+        background:var(--surface-2,#141412);color:var(--text-primary,#e8e6e0)}
       #gate label{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--text-muted,#777)}
       #gate button{margin-top:14px;width:100%;padding:9px;font-size:14px;font-weight:600;border-radius:6px;
-        border:0;background:var(--accent,#2a78d6);color:#fff;cursor:pointer}
-      #gate .err{color:#c0392b;font-size:12px;min-height:16px;margin-top:8px}
+        border:0;background:var(--accent-solid,#ffae00);color:var(--accent-ink,#0a0a0a);cursor:pointer}
+      #gate .err{color:var(--neg,#f2555a);font-size:12px;min-height:16px;margin-top:8px}
     </style>
     <form autocomplete="on">
       <h2>Event Study</h2>
@@ -546,6 +549,6 @@ READY.then(() => {
   const p = document.getElementById('p-data');
   if (p && built) setTimeout(() => { if (!p.textContent.includes('site built')) p.insertAdjacentHTML('beforeend', `<span class="muted">${built}</span>`); }, 1500);
 }).catch(e => {
-  document.body.insertAdjacentHTML('afterbegin', `<div style="padding:16px;color:#c0392b">Could not load data: ${e.message}</div>`);
+  document.body.insertAdjacentHTML('afterbegin', `<div style="padding:16px;color:var(--neg,#f2555a)">Could not load data: ${e.message}</div>`);
 });
 })();

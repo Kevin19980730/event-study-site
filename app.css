@@ -1,129 +1,122 @@
-/* Shared by index.html and rotate.html -- edit here, not per page. */
+/* Shared by index.html and rotate.html -- edit here, not per page.
+   Terminal styling: black ground, amber chrome, monospace numerals. Dark is the
+   default (including "auto"); [data-theme="light"] is a plain light sheet for
+   printing and bright rooms. */
 :root{
+  color-scheme: dark;
+  --surface-0:#000000; --surface-1:#0a0a0a; --surface-2:#141412;
+  --border:#2a2a24; --border-strong:#3d3d33;
+  --text-primary:#e8e6e0; --text-secondary:#b9b7ad; --text-muted:#8a8a82;
+  /* Amber is chrome (rules, labels, the index line), not a data encoding:
+     10.7:1 on the ground. */
+  --accent:#ffae00; --accent-solid:#ffae00; --accent-ink:#0a0a0a;
+  /* Diverging pair for returns: red (loss) <-> teal (gain), near-black neutral at
+     0. Validated on this ground: CVD deltaE 10.5 (deutan), 30.2 normal-vision,
+     both poles >=3:1. Plain red/green measured 3.3-4.5 under deuteranopia -- a
+     terminal look is not worth losing the sign for CVD readers, and every cell
+     prints its signed value anyway. */
+  --neg:#f2555a; --pos:#12a594; --mid:#1c1c1a;
+  --warn:#ffae00; --warn-ink:#ffae00;
+}
+:root[data-theme="light"]{
   color-scheme: light;
   --surface-0:#f5f4f1; --surface-1:#fcfcfb; --surface-2:#efeee9;
   --border:#dcdad3; --border-strong:#c2bfb5;
   --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#7a786f;
-  /* diverging pair for returns: red (loss) <-> teal (gain), neutral gray at 0.
-     Plain red/green measures CVD deltaE 4.1 (indistinguishable to deuteranopes);
-     this teal keeps the "green = up" read and measures 11.0. Every cell also
-     prints its signed value, so color is never the only channel. */
-  --accent:#2a78d6; --accent-solid:#1f66c2;
+  --accent:#b06f00; --accent-solid:#8a5a00; --accent-ink:#ffffff;
   --neg:#d03b3b; --pos:#0d9488; --mid:#f0efec;
   --warn:#fab219; --warn-ink:#8a5a00;
 }
-@media (prefers-color-scheme: dark){
-  :root:where(:not([data-theme="light"])){
-    color-scheme: dark;
-    --surface-0:#131312; --surface-1:#1a1a19; --surface-2:#232322;
-    --border:#33332f; --border-strong:#4a4a45;
-    --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#8f8e85;
-    --warn-ink:#fab219;
-    --accent:#3987e5; --accent-solid:#1f66c2;
-    --neg:#d03b3b; --pos:#0d9488; --mid:#383835;
-  }
-}
-:root[data-theme="dark"]{
-  color-scheme: dark;
-  --surface-0:#131312; --surface-1:#1a1a19; --surface-2:#232322;
-  --border:#33332f; --border-strong:#4a4a45;
-  --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#8f8e85;
-  --warn-ink:#fab219;
-  --accent:#3987e5; --accent-solid:#1f66c2;
-  --neg:#d03b3b; --pos:#0d9488; --mid:#383835;
-}
 *{box-sizing:border-box}
 body{margin:0;background:var(--surface-0);color:var(--text-primary);
-  font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;
-  padding:12px 20px;background:var(--surface-1);border-bottom:1px solid var(--border)}
-h1{font-size:16px;margin:0;font-weight:650;letter-spacing:-.01em}
-.pill{font-size:12px;color:var(--text-secondary);background:var(--surface-2);
-  border:1px solid var(--border);border-radius:999px;padding:3px 10px;white-space:nowrap}
-.pill b{color:var(--text-primary);font-weight:600}
+  font:13px/1.45 ui-monospace,"Cascadia Mono",Consolas,"IBM Plex Mono","DejaVu Sans Mono",monospace;
+  -webkit-font-smoothing:antialiased}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:9px 18px;background:var(--surface-1);border-bottom:2px solid var(--accent)}
+h1{font-size:14px;margin:0;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--accent)}
+.pill{font-size:11.5px;color:var(--text-secondary);background:var(--surface-2);
+  border:1px solid var(--border);border-radius:3px;padding:3px 9px;white-space:nowrap}
+.pill b{color:var(--text-primary);font-weight:700}
 .spacer{flex:1}
-button{font:inherit;font-size:13px;padding:6px 14px;border-radius:7px;
+button{font:inherit;font-size:12px;padding:5px 12px;border-radius:3px;
   border:1px solid var(--border-strong);background:var(--surface-2);
-  color:var(--text-primary);cursor:pointer}
-button:hover{background:var(--surface-1)}
+  color:var(--text-primary);cursor:pointer;letter-spacing:.02em}
+button:hover{border-color:var(--accent);color:var(--accent)}
 button.primary{background:var(--accent-solid);border-color:var(--accent-solid);
-  color:#fff;font-weight:600}
-button.primary:hover{filter:brightness(1.08)}
-button:disabled{opacity:.5;cursor:not-allowed}
-main{padding:16px 20px 40px;max-width:100%}
+  color:var(--accent-ink);font-weight:700}
+button.primary:hover{filter:brightness(1.12);color:var(--accent-ink)}
+button:disabled{opacity:.45;cursor:not-allowed}
+main{padding:14px 18px 40px;max-width:100%}
 .card{background:var(--surface-1);border:1px solid var(--border);
-  border-radius:10px;padding:14px 16px;margin-bottom:16px}
-.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;
-  color:var(--text-muted);margin:0 0 10px;font-weight:600}
-select,input{font:inherit;font-size:13px;padding:5px 8px;border-radius:6px;
-  border:1px solid var(--border-strong);background:var(--surface-1);color:var(--text-primary)}
+  border-radius:4px;padding:13px 15px;margin-bottom:14px}
+.card h2{font-size:11px;text-transform:uppercase;letter-spacing:.14em;
+  color:var(--accent);margin:0 0 10px;font-weight:700}
+select,input{font:inherit;font-size:12px;padding:5px 8px;border-radius:3px;
+  border:1px solid var(--border-strong);background:var(--surface-2);color:var(--text-primary)}
+select:focus,input:focus{outline:1px solid var(--accent);border-color:var(--accent)}
 input[type=number]{width:88px}
-input[type=date]{width:140px}
-.cond{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
-.cond select.series{min-width:270px}
-.cond select.metric{min-width:220px}
+input[type=date]{width:148px}
+.cond{display:flex;gap:8px;align-items:center;margin-bottom:7px;flex-wrap:wrap}
+.cond select.series{min-width:280px}
+.cond select.metric{min-width:230px}
 .cond .rm{padding:4px 9px;line-height:1;color:var(--text-secondary)}
-.opts{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-top:12px;
-  padding-top:12px;border-top:1px solid var(--border)}
-.opt{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--text-secondary)}
-.presets{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-.presets button{font-size:12px;padding:4px 10px;border-radius:999px;color:var(--text-secondary)}
-.hint{font-size:12px;color:var(--text-muted);margin-top:8px}
-.hero{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
-.hero .n{font-size:30px;font-weight:680;letter-spacing:-.02em}
-.hero .lbl{font-size:13px;color:var(--text-secondary)}
-.scroll{overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:var(--surface-1)}
+.opts{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:11px;
+  padding-top:11px;border-top:1px solid var(--border)}
+.opt{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--text-secondary)}
+.presets{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+.presets button{font-size:11.5px;padding:4px 10px;border-radius:3px;color:var(--text-secondary)}
+.hint{font-size:11.5px;color:var(--text-muted);margin-top:8px;line-height:1.5}
+.hero{display:flex;align-items:baseline;gap:10px;margin-bottom:11px}
+.hero .n{font-size:30px;font-weight:700;letter-spacing:-.01em;color:var(--accent)}
+.hero .lbl{font-size:12.5px;color:var(--text-secondary)}
+.scroll{overflow-x:auto;border:1px solid var(--border);border-radius:4px;background:var(--surface-1)}
 table{border-collapse:separate;border-spacing:0;font-variant-numeric:tabular-nums;
-  font-size:12.5px;white-space:nowrap;min-width:100%}
-th,td{padding:4px 9px;text-align:right;border-bottom:1px solid var(--border)}
-th{background:var(--surface-2);color:var(--text-secondary);font-weight:600;
+  font-size:12px;white-space:nowrap;min-width:100%}
+th,td{padding:3px 9px;text-align:right;border-bottom:1px solid var(--border)}
+th{background:var(--surface-2);color:var(--text-secondary);font-weight:700;
   position:sticky;top:0;z-index:2}
-/* secondary rather than muted ink: at 11px uppercase on the header surface the
-   muted token measures 3.81:1, under the 4.5:1 needed for text this size */
-thead tr.grp th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;
-  color:var(--text-secondary);top:0}
-thead tr.hdr th{top:25px}
+thead tr.grp th{font-size:10.5px;text-transform:uppercase;letter-spacing:.12em;
+  color:var(--accent);top:0}
+thead tr.hdr th{top:23px;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
 td.date,th.date{text-align:left;position:sticky;left:0;background:var(--surface-1);
   z-index:1;border-right:1px solid var(--border)}
 th.date{background:var(--surface-2);z-index:3}
-tbody tr:hover td{filter:brightness(.97)}
+tbody tr:hover td{filter:brightness(1.25)}
 tr.sep td,tr.sep th{border-top:2px solid var(--border-strong)}
-tr.stat td,tr.stat th{font-weight:600;background:var(--surface-2)}
+tr.stat td,tr.stat th{font-weight:700;background:var(--surface-2)}
+tr.stat td.date{color:var(--accent)}
 /* the "now" row is a reference point, not an event -- ruled off from the event
    list above it and excluded from every statistic below */
-tr.latest td{border-top:2px solid var(--border-strong);border-bottom:none}
-tr.latest td.date{font-weight:600}
-.tag{font-size:10px;text-transform:uppercase;letter-spacing:.05em;font-weight:700;
-  border:1px solid var(--border-strong);border-radius:999px;padding:1px 6px;
-  margin-left:6px;color:var(--text-secondary);vertical-align:1px}
+tr.latest td{border-top:2px solid var(--accent);border-bottom:none}
+tr.latest td.date{font-weight:700;color:var(--accent)}
+.tag{font-size:9.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;
+  border:1px solid var(--accent);border-radius:2px;padding:1px 5px;
+  margin-left:6px;color:var(--accent);vertical-align:1px}
 tr.sigrow td{background:var(--surface-1);color:var(--text-secondary)}
 tr.sigrow td.date{color:var(--text-secondary)}
-tr.sigrow td.sig{color:var(--text-primary);font-weight:700}
-/* "fewer independent events than N" is emphasised with weight, not the amber
-   token -- that hue is sub-3:1 on the light surface and would carry the meaning
-   on colour alone. The row sits directly under N, so the comparison is visible. */
+tr.sigrow td.sig{color:var(--accent);font-weight:700}
+/* "fewer independent events than N" is emphasised with weight, not hue alone */
 td.warnval{color:var(--text-primary);font-weight:700}
-/* baseline rows read as secondary via their label, not via dimmed numerals --
-   dimmed text over a filled heat cell drops below 4.5:1 in dark mode */
 tr.base td.date{color:var(--text-secondary)}
 tr.base td,tr.base th{background:var(--surface-1)}
 .gap{border-left:1px solid var(--border-strong)}
 .prov{color:var(--warn-ink);font-weight:700;margin-left:4px}
-.err{color:var(--neg);font-size:13px}
-.legend{display:flex;gap:14px;align-items:center;font-size:12px;
-  color:var(--text-secondary);margin-top:10px;flex-wrap:wrap}
-.sw{display:inline-block;width:11px;height:11px;border-radius:3px;
+.err{color:var(--neg);font-size:12.5px}
+.legend{display:flex;gap:14px;align-items:center;font-size:11.5px;
+  color:var(--text-secondary);margin-top:9px;flex-wrap:wrap}
+.sw{display:inline-block;width:11px;height:11px;border-radius:2px;
   margin-right:5px;vertical-align:-1px}
-.ramp{display:inline-block;width:120px;height:10px;border-radius:3px;vertical-align:-1px;
+.ramp{display:inline-block;width:120px;height:10px;border-radius:2px;vertical-align:-1px;
   background:linear-gradient(90deg,var(--neg),var(--mid),var(--pos))}
 #chart{width:100%;height:230px;display:block}
-.tip{position:fixed;pointer-events:none;background:var(--surface-1);
-  border:1px solid var(--border-strong);border-radius:7px;padding:6px 9px;
-  font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.16);z-index:50;display:none}
+.tip{position:fixed;pointer-events:none;background:var(--surface-2);
+  border:1px solid var(--accent);border-radius:3px;padding:6px 9px;
+  font-size:11.5px;box-shadow:0 4px 14px rgba(0,0,0,.6);z-index:50;display:none}
 .muted{color:var(--text-muted)}
 
 /* page nav (shared by both pages) */
-.tabs{display:flex;gap:6px;flex-wrap:wrap}
-.tabs button{border-radius:8px}
+.tabs{display:flex;gap:5px;flex-wrap:wrap}
+.tabs button{border-radius:3px;text-transform:uppercase;letter-spacing:.06em;font-size:11.5px}
 .tabs button.on{background:var(--accent-solid);border-color:var(--accent-solid);
-  color:#fff;font-weight:600}
+  color:var(--accent-ink);font-weight:700}

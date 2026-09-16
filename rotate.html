@@ -86,7 +86,7 @@ $('#theme').onclick = () => {
 };
 
 const pct = v => v == null ? '' : (v * 100).toFixed(1) + '%';
-const CAP = 78;
+const CAP = 60;
 function heat(v, scale) {
   if (v == null || !scale) return '';
   const t = Math.max(-1, Math.min(1, v / scale));
@@ -319,7 +319,7 @@ function render() {
   ]);
   const s = await (await fetch('/api/status')).json();
   $('#p-data').innerHTML = `data through <b>${s.data_through || '—'}</b>` +
-    (s.gap_series ? ` · <b style="color:#e8a317" title="Days between the last Bloomberg export and the first daily Yahoo capture are missing for these series. Refresh the Bloomberg workbook in Downloads.">⚠ ${s.gap_series} series missing up to ${s.gap_sessions} sessions</b>` : '');
+    (s.gap_series ? ` · <b class="prov" title="Days between the last Bloomberg export and the first daily Yahoo capture are missing for these series. Refresh the Bloomberg workbook in Downloads.">⚠ ${s.gap_series} series missing up to ${s.gap_sessions} sessions</b>` : '');
   addCond('ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20);
   run();
 })();
