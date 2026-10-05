@@ -157,13 +157,13 @@ function upperBound(arr, x) {                 // searchsorted(side='right')
 }
 
 /* --------------------------------------------------------------- metrics */
-const FWD = [['1W', 5], ['2W', 10], ['1M', 21], ['3M', 63], ['6M', 126], ['12M', 252], ['18M', 378]];
-const PAST = [['18M', 378], ['12M', 252], ['6M', 126], ['3M', 63], ['1M', 21], ['2W', 10], ['1W', 5]];
+const FWD = [['1D', 1], ['1W', 5], ['2W', 10], ['1M', 21], ['3M', 63], ['6M', 126], ['12M', 252], ['18M', 378]];
+const PAST = [['18M', 378], ['12M', 252], ['6M', 126], ['3M', 63], ['1M', 21], ['2W', 10], ['1W', 5], ['1D', 1]];
 const WIN_52W = 253;
-const RET_DAYS = {ret_1w: 5, ret_2w: 10, ret_1m: 21, ret_3m: 63, ret_6m: 126, ret_12m: 252, ret_18m: 378};
+const RET_DAYS = {ret_1d: 1, ret_1w: 5, ret_2w: 10, ret_1m: 21, ret_3m: 63, ret_6m: 126, ret_12m: 252, ret_18m: 378};
 const STATE_COLS = new Set(['52W high']);
 const RETURN_COLS = ['52W high', 'YTD', ...PAST.map(([l]) => 'Last ' + l), ...FWD.map(([l]) => 'Next ' + l)];
-const FWD_COLS = FWD.map(([l]) => 'Next ' + l);
+const FWD_COLS = FWD.filter(([l]) => l !== '1D').map(([l]) => 'Next ' + l);   // rotation starts at 1W
 const COL_DAYS = Object.fromEntries([['52W high', WIN_52W], ['YTD', 252],
   ...PAST.map(([l, n]) => ['Last ' + l, n]), ...FWD.map(([l, n]) => ['Next ' + l, n])]);
 const SNAP_TOLERANCE = 7;
@@ -394,14 +394,35 @@ function parseRequest(p) {
   if (conds.some(c => Number.isNaN(c.value))) throw new Error('could not convert string to float');
   return {conditions: conds, measure: p.measure || conds[0].series,
           minGap: p.min_gap === undefined ? 63 : parseInt(p.min_gap),
-          mode: p.mode || 'first_entry', start: p.start || null, end: p.end || null};
+          mode: p.mode || 'first_entry', start: p.start || null, end: p.end || null,
+          topN: Math.max(0, parseInt(p.top_n) || 0), topCol: p.top_col || 'Last 1D',
+          topDir: p.top_dir === 'highest' ? 'highest' : 'lowest'};
+}
+/* greedy in rank order, skipping anything within minGap bars of a kept event (engine.top_events) */
+function topEvents(table, n, col, dir, minGap) {
+  if (!RETURN_COLS.includes(col)) throw new Error(`unknown ranking column '${col}'`);
+  const sign = dir === 'lowest' ? 1 : -1;
+  const order = table.map((r, i) => i).filter(i => finite(table[i][col]))
+    .sort((a, b) => sign * (table[a][col] - table[b][col]) || a - b);
+  const kept = [];
+  for (const i of order) {
+    if (kept.length === n) break;
+    if (minGap && kept.some(j => Math.abs(table[i].pos - table[j].pos) < minGap)) continue;
+    kept.push(i);
+  }
+  return kept.sort((a, b) => a - b).map(i => table[i]);
 }
 const N_ITER = 2000;
 
 function study(payload) {
   const kw = parseRequest(payload), cols = RETURN_COLS;
-  const days = findEvents(kw.conditions, kw.minGap, kw.mode, kw.start, kw.end);
-  const table = eventTable(days, kw.measure, cols);
+  let days = findEvents(kw.conditions, kw.minGap, kw.mode, kw.start, kw.end);
+  let table = eventTable(days, kw.measure, cols);
+  const nMatched = table.length;
+  if (kw.topN && table.length) {
+    table = topEvents(table, kw.topN, kw.topCol, kw.topDir, kw.minGap);
+    days = table.map(r => r.day);
+  }
   const toRec = r => {
     const rec = {date: iso(r.day), level: Number(r.level.toFixed(2)), provisional: r.provisional};
     for (const c of cols) rec[c] = finite(r[c]) ? r[c] : null;
@@ -424,7 +445,7 @@ function study(payload) {
     kw, table, days,
     json: {
       cols, events: table.map(toRec), stats: summarize(table, cols),
-      baseline: baseline(kw.measure, cols), n_events: table.length,
+      baseline: baseline(kw.measure, cols), n_events: table.length, n_matched: nMatched,
       pvals: days.length ? significance(days, kw.measure, cols, N_ITER) : {},
       independent: days.length ? Object.fromEntries(cols.map(c => [c, independentN(days, kw.measure, COL_DAYS[c])])) : {},
       n_iter: N_ITER, latest, now: conditionNow(kw.conditions),

@@ -38,6 +38,14 @@
         </select></label>
       <label class="opt">Min gap
         <input type="number" id="gap" value="63" min="0" step="1"> <span class="muted">trading days</span></label>
+      <label class="opt" title="Keep only the X most extreme events by the chosen column. Every statistic then covers just those X.">Show
+        <select id="topn"><option value="">all events</option>
+          <option value="5">top 5</option><option value="10">top 10</option>
+          <option value="20">top 20</option><option value="25">top 25</option>
+          <option value="50">top 50</option><option value="100">top 100</option></select>
+        <span class="muted">by</span>
+        <select id="topdir"><option value="lowest">lowest</option><option value="highest">highest</option></select>
+        <select id="topcol"></select></label>
       <label class="opt">From <input type="date" id="start"></label>
       <label class="opt">To <input type="date" id="end"></label>
       <span class="spacer"></span>
@@ -52,6 +60,7 @@
       <button data-preset="vix30">VIX above 30</button>
       <button data-preset="semis20spx">Semis −20% while S&amp;P 500 −10%</button>
       <button data-preset="oil">Oil −25% from 52W high</button>
+      <button data-preset="spxworst">S&amp;P 500 10 worst days</button>
     </div>
     <div class="hint" id="hint"></div>
   </div>
@@ -141,29 +150,55 @@ const PRESETS = {
   semis20spx: [['ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20],
                ['ac:s_p500', 'dd_52w_high', '<=', -10]],
   oil:        [['ac:oil', 'dd_52w_high', '<=', -25]],
+  spxworst:   {conds: [['ac:s_p500', 'ret_1d', '<=', -3]], mode: 'every_day', gap: 0,
+               top: [10, 'lowest', 'Last 1D']},
 };
+/* a preset defines the whole study, so anything it doesn't set goes back to default */
 document.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
+  const p = PRESETS[b.dataset.preset], spec = Array.isArray(p) ? {conds: p} : p;
   $('#conds').innerHTML = '';
-  PRESETS[b.dataset.preset].forEach(c => addCond(...c));
+  spec.conds.forEach(c => addCond(...c));
   $('#measure').value = '';
+  $('#mode').value = spec.mode || 'first_entry';
+  $('#gap').value = spec.gap ?? 63;
+  const [n, dir, col] = spec.top || ['', 'lowest', 'Last 1D'];
+  $('#topn').value = n; $('#topdir').value = dir; $('#topcol').value = col;
   run();
 });
+
+/* ---------- top X ---------- */
+/* any table column can rank; a forward one gets a warning in the output, since
+   the forward statistics then describe the selection rather than the events */
+const H = ['1D', '1W', '2W', '1M', '3M', '6M', '12M', '18M'];
+const RANK_GROUPS = [
+  ['At event date', [['52W high', 'distance from 52W high'], ['YTD', 'YTD return']]],
+  ['Trailing', H.map(h => ['Last ' + h, 'trailing ' + h + ' return'])],
+  ['Forward (look-ahead)', H.map(h => ['Next ' + h, 'forward ' + h + ' return'])],
+];
+const rankLabel = c => (RANK_GROUPS.flatMap(g => g[1]).find(r => r[0] === c) || [c, c])[1];
+$('#topcol').innerHTML = RANK_GROUPS.map(([g, opts]) => `<optgroup label="${g}">` +
+  opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join('') + '</optgroup>').join('');
+$('#topcol').value = 'Last 1D';
+let REQ = null;   // the request behind LAST, so the table can show the ranking it used
 
 /* ---------- run ---------- */
 function payload() {
   return {conditions: readConds(), measure: $('#measure').value,
           mode: $('#mode').value, min_gap: parseInt($('#gap').value || 0),
-          start: $('#start').value, end: $('#end').value};
+          start: $('#start').value, end: $('#end').value,
+          top_n: parseInt($('#topn').value || 0), top_dir: $('#topdir').value,
+          top_col: $('#topcol').value};
 }
 async function run() {
   $('#run').disabled = true;
   $('#out').innerHTML = '<div class="card muted">Running…</div>';
   try {
+    const req = payload();
     const r = await fetch('/api/study', {method: 'POST',
-      headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload())});
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify(req)});
     const j = await r.json();
     if (!r.ok) { $('#out').innerHTML = `<div class="card err">${j.error}</div>`; return; }
-    LAST = j; render(j);
+    LAST = j; REQ = req; render(j);
   } catch (e) {
     $('#out').innerHTML = `<div class="card err">${e}</div>`;
   } finally { $('#run').disabled = false; }
@@ -184,7 +219,14 @@ function render(j) {
   const state = cols.filter(c => !c.startsWith('Last') && !c.startsWith('Next') && c !== 'YTD');
   const past = cols.filter(c => c.startsWith('Last') || c === 'YTD');
   const fwd = cols.filter(c => c.startsWith('Next'));
-  const GAPS = new Set(['YTD', 'Next 1W']);   // vertical rules between bands
+  const GAPS = new Set(['YTD', 'Next 1D']);   // vertical rules between bands
+  /* a top-X study lists its events in rank order, with the ranking column outlined */
+  const ranked = REQ && REQ.top_n > 0 && j.n_matched > 0;
+  const RK = ranked ? REQ.top_col : null;
+  const events = ranked
+    ? [...j.events].sort((a, b) => (REQ.top_dir === 'lowest' ? 1 : -1) * (a[RK] - b[RK]))
+    : j.events;
+  const cls = c => (GAPS.has(c) ? 'gap' : '') + (c === RK ? ' sortcol' : '');
 
   /* per-column symmetric scale anchored at 0 */
   const scale = {};
@@ -194,18 +236,18 @@ function render(j) {
     scale[c] = m || 0.01;
   }
 
-  const th = c => `<th class="${GAPS.has(c) ? 'gap' : ''}">${c.replace('Last ', '').replace('Next ', '')}</th>`;
+  const th = c => `<th class="${cls(c)}">${c.replace('Last ', '').replace('Next ', '')}</th>`;
   const cellsFor = (fn) => cols.map(fn).join('');
   const cell = (v, c, sc) =>
-    `<td class="${GAPS.has(c) ? 'gap' : ''}" style="background:${heat(v, sc[c])}">${pct(v)}</td>`;
+    `<td class="${cls(c)}" style="background:${heat(v, sc[c])}">${pct(v)}</td>`;
 
   const dataRow = (e, cls, label) =>
     `<tr class="${cls || ''}"><td class="date">${label || e.date}` +
     `${e.provisional ? '<span class="prov" title="includes estimated data">●</span>' : ''}</td>` +
     cols.map(c => cell(e[c], c, scale)).join('') + '</tr>';
 
-  let rows = j.events.map(e => dataRow(e)).join('');
-  if (!j.events.length)
+  let rows = events.map(e => dataRow(e)).join('');
+  if (!events.length)
     rows = `<tr><td class="date muted" colspan="${cols.length + 1}">No events matched.</td></tr>`;
 
   /* Where things stand now. Reference only -- it is not an event, so it is
@@ -273,7 +315,8 @@ function render(j) {
   $('#out').innerHTML = `
     <div class="card">
       <div class="hero"><span class="n">${j.n_events}</span>
-        <span class="lbl">events — returns measured on <b>${nm}</b>
+        <span class="lbl">events${ranked ? ` — top ${j.n_events} of ${j.n_matched} by ${REQ.top_dir}
+          ${rankLabel(RK)}` : ''} — returns measured on <b>${nm}</b>
         <span class="muted">(${j.measure.ticker || ''})</span></span></div>
       <svg id="chart"></svg>
       <div class="legend">
@@ -284,6 +327,13 @@ function render(j) {
 
     <div class="card">
       <h2>Event returns</h2>
+      ${ranked ? `<div class="hint" style="margin:0 0 8px">Ranked by ${REQ.top_dir} ${rankLabel(RK)}
+        (outlined): the ${j.n_events} most extreme of ${j.n_matched} matching events${REQ.min_gap
+        ? `, no two within ${REQ.min_gap} trading days (Min gap)` : ''}. Every
+        statistic below, including N independent and the p-values, covers only these
+        ${j.n_events}.${RK.startsWith('Next') ? ` <b class="prov">Look-ahead:</b> these events
+        were picked by their own forward return, so the forward statistics and p-values
+        describe the selection, not an edge you could have traded.` : ''}</div>` : ''}
       <div class="scroll"><table>
         <thead>
           <tr class="grp"><th class="date"></th>
