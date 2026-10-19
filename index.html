@@ -58,6 +58,8 @@
       <button data-preset="semis20">Semis −20% from 52W high</button>
       <button data-preset="spx10">S&amp;P 500 −10% from 52W high</button>
       <button data-preset="vix30">VIX above 30</button>
+      <button data-preset="spxdown5">S&amp;P 500 5 down days in a row</button>
+      <button data-preset="spxdown5x">S&amp;P 500 5+ down days, −5% or worse</button>
       <button data-preset="semis20spx">Semis −20% while S&amp;P 500 −10%</button>
       <button data-preset="oil">Oil −25% from 52W high</button>
       <button data-preset="spxworst">S&amp;P 500 10 worst days</button>
@@ -147,6 +149,8 @@ const PRESETS = {
   semis20:    [['ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20]],
   spx10:      [['ac:s_p500', 'dd_52w_high', '<=', -10]],
   vix30:      [['ac:vix', 'price', '>=', 30]],
+  spxdown5:   [['ac:s_p500', 'down_streak', '>=', 5]],
+  spxdown5x:  [['ac:s_p500', 'down_streak', '>=', 5], ['ac:s_p500', 'streak_ret', '<=', -5]],
   semis20spx: [['ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20],
                ['ac:s_p500', 'dd_52w_high', '<=', -10]],
   oil:        [['ac:oil', 'dd_52w_high', '<=', -25]],
@@ -488,7 +492,7 @@ $('#btn-update').onclick = async () => {
   $('#measure').innerHTML = '<option value="">same as condition 1</option>' + seriesOptions();
   addCond('ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20);
   $('#hint').textContent =
-    'Percentages are entered as numbers: −20 means 20% below the 52-week high. ' +
+    'Percentages are entered as numbers: −20 means 20% below the 52-week high; up/down streaks are counted in days. ' +
     'Multiple conditions are combined with AND. "Min gap" suppresses re-triggers within N trading days ' +
     'so one drawdown episode counts once.';
   await status();

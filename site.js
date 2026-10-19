@@ -206,6 +206,23 @@ function metricSeries(sid, metric) {
   const s = series(sid), v = s.v, n = v.length;
   let out;
   if (metric === 'price') out = v;
+  else if (metric === 'up_streak' || metric === 'down_streak') {
+    /* run of consecutive up/down closes ending on each day; a flat close breaks it */
+    const up = metric === 'up_streak';
+    out = new Float64Array(n);
+    for (let i = 1; i < n; i++) out[i] = (up ? v[i] > v[i - 1] : v[i] < v[i - 1]) ? out[i - 1] + 1 : 0;
+  }
+  else if (metric === 'streak_ret') {
+    /* total move over the current same-direction run, from the close before it began */
+    out = new Float64Array(n);
+    let anchor = NaN, prev = 0;
+    for (let i = 1; i < n; i++) {
+      const dir = Math.sign(v[i] - v[i - 1]);
+      if (dir !== prev) anchor = v[i - 1];
+      out[i] = dir === 0 ? 0 : v[i] / anchor - 1;
+      prev = dir;
+    }
+  }
   else if (metric === 'dd_52w_high') { const m = rollingExtreme(v, WIN_52W, true); out = v.map((x, i) => x / m[i] - 1); }
   else if (metric === 'up_52w_low') { const m = rollingExtreme(v, WIN_52W, false); out = v.map((x, i) => x / m[i] - 1); }
   else if (metric === 'dd_alltime') { let mx = -Infinity; out = v.map(x => { mx = Math.max(mx, x); return x / mx - 1; }); }
@@ -217,7 +234,7 @@ function metricSeries(sid, metric) {
   mcache.set(key, out);
   return out;
 }
-const PCT = id => id !== 'price';
+const PCT = id => !['price', 'up_streak', 'down_streak'].includes(id);
 function applyOp(x, op, val) {
   if (op === '<=') return x <= val;
   if (op === '>=') return x >= val;

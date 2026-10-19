@@ -60,6 +60,8 @@ tr.secrow td.name{background:var(--surface-2);text-transform:uppercase;
       <button data-preset="semis20">Semis −20% from 52W high</button>
       <button data-preset="spx10">S&amp;P 500 −10% from 52W high</button>
       <button data-preset="vix30">VIX above 30</button>
+      <button data-preset="spxdown5">S&amp;P 500 5 down days in a row</button>
+      <button data-preset="spxdown5x">S&amp;P 500 5+ down days, −5% or worse</button>
       <button data-preset="oil">Oil −25% from 52W high</button>
     </div>
     <div class="hint">Forward returns for every series in the universe, measured from
@@ -136,6 +138,8 @@ const PRESETS = {
   semis20: [['ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20]],
   spx10:   [['ac:s_p500', 'dd_52w_high', '<=', -10]],
   vix30:   [['ac:vix', 'price', '>=', 30]],
+  spxdown5: [['ac:s_p500', 'down_streak', '>=', 5]],
+  spxdown5x: [['ac:s_p500', 'down_streak', '>=', 5], ['ac:s_p500', 'streak_ret', '<=', -5]],
   oil:     [['ac:oil', 'dd_52w_high', '<=', -25]],
 };
 document.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
