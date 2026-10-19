@@ -118,7 +118,10 @@ function seriesOptions(sel) {
   }
   return html;
 }
-function addCond(series, metric, op, value) {
+/* An up/down streak row carries an optional total-move box: "5 down days in a row,
+   down 5% or more in total". It is sent as a second, ANDed streak_ret condition. */
+const STREAK = ['up_streak', 'down_streak'];
+function addCond(series, metric, op, value, move) {
   const div = document.createElement('div');
   div.className = 'cond';
   div.innerHTML =
@@ -128,19 +131,36 @@ function addCond(series, metric, op, value) {
      <select class="op">${['<=', '>=', '<', '>'].map(o =>
        `<option${o === op ? ' selected' : ''}>${o}</option>`).join('')}</select>
      <input type="number" class="val" value="${value}" step="0.5">
+     <span class="streak-move"><span class="dir"></span> &ge;
+       <input type="number" class="move" value="${move ?? ''}" min="0" step="0.5"
+              placeholder="any" title="Total move over the run, from the close before it began. Blank = any size."> %</span>
      <button class="rm" title="remove">✕</button>`;
+  const met = div.querySelector('.metric'), mv = div.querySelector('.streak-move');
+  const sync = () => {
+    mv.hidden = !STREAK.includes(met.value);
+    mv.querySelector('.dir').textContent = met.value === 'up_streak' ? '& up' : '& down';
+  };
+  met.addEventListener('change', sync);
+  sync();
   div.querySelector('.rm').onclick = () => {
     if ($('#conds').children.length > 1) div.remove();
   };
   $('#conds').appendChild(div);
 }
 function readConds() {
-  return [...document.querySelectorAll('.cond')].map(d => ({
-    series: d.querySelector('.series').value,
-    metric: d.querySelector('.metric').value,
-    op: d.querySelector('.op').value,
-    value: parseFloat(d.querySelector('.val').value),
-  }));
+  return [...document.querySelectorAll('.cond')].flatMap(d => {
+    const c = {
+      series: d.querySelector('.series').value,
+      metric: d.querySelector('.metric').value,
+      op: d.querySelector('.op').value,
+      value: parseFloat(d.querySelector('.val').value),
+    };
+    const move = parseFloat(d.querySelector('.move').value);
+    if (!STREAK.includes(c.metric) || !(move > 0)) return [c];
+    const up = c.metric === 'up_streak';
+    return [c, {series: c.series, metric: 'streak_ret', op: up ? '>=' : '<=',
+                value: up ? move : -move}];
+  });
 }
 $('#add-cond').onclick = () => addCond('ac:s_p500', 'dd_52w_high', '<=', -10);
 
@@ -150,7 +170,7 @@ const PRESETS = {
   spx10:      [['ac:s_p500', 'dd_52w_high', '<=', -10]],
   vix30:      [['ac:vix', 'price', '>=', 30]],
   spxdown5:   [['ac:s_p500', 'down_streak', '>=', 5]],
-  spxdown5x:  [['ac:s_p500', 'down_streak', '>=', 5], ['ac:s_p500', 'streak_ret', '<=', -5]],
+  spxdown5x:  [['ac:s_p500', 'down_streak', '>=', 5, 5]],
   semis20spx: [['ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20],
                ['ac:s_p500', 'dd_52w_high', '<=', -10]],
   oil:        [['ac:oil', 'dd_52w_high', '<=', -25]],
@@ -492,7 +512,8 @@ $('#btn-update').onclick = async () => {
   $('#measure').innerHTML = '<option value="">same as condition 1</option>' + seriesOptions();
   addCond('ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20);
   $('#hint').textContent =
-    'Percentages are entered as numbers: −20 means 20% below the 52-week high; up/down streaks are counted in days. ' +
+    'Percentages are entered as numbers: −20 means 20% below the 52-week high; up/down streaks are counted in days, and the "& down ≥ %" box next to them ' +
+    'adds a minimum total move over the run (e.g. 5 down days, down 5% or more). ' +
     'Multiple conditions are combined with AND. "Min gap" suppresses re-triggers within N trading days ' +
     'so one drawdown episode counts once.';
   await status();

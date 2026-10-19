@@ -60,6 +60,9 @@ input[type=date]{width:148px}
 .cond{display:flex;gap:8px;align-items:center;margin-bottom:7px;flex-wrap:wrap}
 .cond select.series{min-width:280px}
 .cond select.metric{min-width:230px}
+.cond .streak-move{display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--text-secondary)}
+.cond .streak-move[hidden]{display:none}
+.cond input.move{width:64px}
 .cond .rm{padding:4px 9px;line-height:1;color:var(--text-secondary)}
 .opts{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:11px;
   padding-top:11px;border-top:1px solid var(--border)}
