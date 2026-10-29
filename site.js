@@ -206,6 +206,8 @@ function metricSeries(sid, metric) {
   const s = series(sid), v = s.v, n = v.length;
   let out;
   if (metric === 'price') out = v;
+  else if (metric === 'cycle_year') out = Float64Array.from(s.d, d => yearOf(d) % 4);
+  else if (metric === 'month') out = Float64Array.from(s.d, d => new Date(d * DAY).getUTCMonth() + 1);
   else if (metric === 'up_streak' || metric === 'down_streak') {
     /* run of consecutive up/down closes ending on each day; a flat close breaks it */
     const up = metric === 'up_streak';
@@ -234,8 +236,9 @@ function metricSeries(sid, metric) {
   mcache.set(key, out);
   return out;
 }
-const PCT = id => !['price', 'up_streak', 'down_streak'].includes(id);
+const PCT = id => !['price', 'up_streak', 'down_streak', 'cycle_year', 'month'].includes(id);
 function applyOp(x, op, val) {
+  if (op === '==') return x === val;
   if (op === '<=') return x <= val;
   if (op === '>=') return x >= val;
   if (op === '<') return x < val;
@@ -550,6 +553,162 @@ function rotateCSV(payload) {
   return out;
 }
 
+/* ----------------------------------------------------------- seasonality */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const CYCLE = [[1, 'Post-election'], [2, 'Midterm'], [3, 'Pre-election'], [0, 'Election']];
+const RECENT_YEARS = 10;
+const parts = day => { const t = new Date(day * DAY);           // [year, month 1-12, weekday Mon=0]
+  return [t.getUTCFullYear(), t.getUTCMonth() + 1, (t.getUTCDay() + 6) % 7]; };
+function lastWeekday(y, m) {                  // engine._last_weekday, as days since epoch
+  let d = Math.round(Date.UTC(y, m, 0) / DAY);
+  while (parts(d)[2] >= 5) d--;
+  return d;
+}
+const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+function bucket(s, labels) {                  // engine._bucket
+  const n = s.length;
+  const out = {avg: null, median: null, sd: null, win: null, best: null, worst: null,
+               best_at: null, worst_at: null, n};
+  if (!n) return out;
+  out.avg = mean(s);
+  out.median = median([...s].sort((a, b) => a - b));
+  if (n > 1) { let ss = 0; for (const x of s) ss += (x - out.avg) ** 2; out.sd = Math.sqrt(ss / (n - 1)); }
+  out.win = s.filter(x => x > 0).length / n;
+  let hi = 0, lo = 0;
+  for (let i = 1; i < n; i++) { if (s[i] > s[hi]) hi = i; if (s[i] < s[lo]) lo = i; }
+  out.best = s[hi]; out.worst = s[lo];
+  if (labels) { out.best_at = labels[hi]; out.worst_at = labels[lo]; }
+  return out;
+}
+/* line-for-line port of engine.seasonality() */
+function seasonality(sid, startYear, endYear, cycle) {
+  const s = series(sid), n = s.v.length;
+  if (!n) return null;
+  const P = Array.from(s.d, parts), lastDay = s.d[n - 1], [LY, LM] = P[n - 1];
+  /* month-end and year-end closes, in date order */
+  const mKey = [], mClose = [], yKey = [], yClose = [];
+  for (let i = 0; i < n; i++) {
+    const k = P[i][0] * 12 + P[i][1] - 1;
+    if (mKey[mKey.length - 1] === k) mClose[mClose.length - 1] = s.v[i]; else { mKey.push(k); mClose.push(s.v[i]); }
+    if (yKey[yKey.length - 1] === P[i][0]) yClose[yClose.length - 1] = s.v[i]; else { yKey.push(P[i][0]); yClose.push(s.v[i]); }
+  }
+  const mk = [], mret = [];
+  for (let i = 1; i < mKey.length; i++)
+    if (mKey[i] - mKey[i - 1] === 1) { mk.push(mKey[i]); mret.push(mClose[i] / mClose[i - 1] - 1); }
+  const years = mk.map(k => Math.floor(k / 12)), months = mk.map(k => k % 12 + 1);
+  const yy = [], yret = [];
+  for (let i = 1; i < yKey.length; i++)
+    if (yKey[i] - yKey[i - 1] === 1) { yy.push(yKey[i]); yret.push(yClose[i] / yClose[i - 1] - 1); }
+
+  const liveM = LY * 12 + LM - 1;
+  const mPartial = lastDay < lastWeekday(LY, LM), yPartial = lastDay < lastWeekday(LY, 12);
+  const lo = startYear ? parseInt(startYear) : -1e9, hi = endYear ? parseInt(endYear) : 1e9;
+  const ph = cycle === null || cycle === undefined || cycle === '' ? null : parseInt(cycle);
+  const phase = y => ph === null || y % 4 === ph;
+  const inwin = years.map(y => y >= lo && y <= hi && phase(y));
+  const done = inwin.map((w, i) => w && !(mk[i] === liveM && mPartial));
+  const ywin = yy.map(y => y >= lo && y <= hi && phase(y));
+  const ydone = ywin.map((w, i) => w && !(yy[i] === LY && yPartial));
+
+  const gridYears = [...new Set([...years.filter((_, i) => inwin[i]), ...yy.filter((_, i) => ywin[i])])]
+    .sort((a, b) => b - a);
+  const grid = gridYears.map(y => {
+    const row = {year: y, m: Array(12).fill(null), year_ret: null, partial_m: null,
+                 partial_y: y === LY && yPartial};
+    for (let i = 0; i < mk.length; i++) if (inwin[i] && years[i] === y) row.m[months[i] - 1] = mret[i];
+    if (y === LY && mPartial) row.partial_m = LM;
+    const j = yy.indexOf(y);
+    if (j >= 0) row.year_ret = yret[j];
+    return row;
+  });
+
+  const pick = (arr, mask) => arr.filter((_, i) => mask[i]);
+  const doneR = pick(mret, done), doneY = pick(years, done);
+  const allAvg = doneR.length ? mean(doneR) : null;
+  const recentLo = doneY.length ? Math.max(...doneY) - RECENT_YEARS + 1 : null;
+  const by_month = [];
+  for (let mo = 1; mo <= 12; mo++) {
+    const sel = done.map((d, i) => d && months[i] === mo);
+    const b = bucket(pick(mret, sel), pick(years, sel));
+    b.t = b.sd && allAvg !== null ? (b.avg - allAvg) / (b.sd / Math.sqrt(b.n)) : null;
+    const rs = sel.map((x, i) => x && recentLo !== null && years[i] >= recentLo);
+    const rv = pick(mret, rs);
+    b.recent_avg = rv.length ? mean(rv) : null;
+    b.recent_n = rv.length;
+    b.label = MONTHS[mo - 1];
+    by_month.push(b);
+  }
+  const every = bucket(doneR, doneY); every.label = 'All months';
+
+  const cycles = CYCLE.map(([k, lbl]) => {
+    const sel = ydone.map((d, i) => d && yy[i] % 4 === k);
+    const b = bucket(pick(yret, sel), pick(yy, sel));
+    b.label = lbl; b.now = LY % 4 === k;
+    return b;
+  });
+  const annual = bucket(pick(yret, ydone), pick(yy, ydone)); annual.label = 'All years';
+
+  const wd = Array.from({length: 7}, () => []);
+  for (let i = 1; i < n; i++) if (P[i][0] >= lo && P[i][0] <= hi && phase(P[i][0])) wd[P[i][2]].push(s.v[i] / s.v[i - 1] - 1);
+  const weekday = [];
+  wd.forEach((v, k) => { if (v.length) { const b = bucket(v); b.label = WEEKDAYS[k]; weekday.push(b); } });
+
+  /* average YTD path by session of the year over complete years in the window */
+  const base = new Map(yKey.map((y, i) => [y, yClose[i]])), paths = new Map(), segIdx = new Map();
+  for (let i = 0; i < yy.length; i++) if (ywin[i]) { paths.set(yy[i], []); segIdx.set(yy[i], []); }
+  for (let i = 0; i < n; i++) {
+    const y = P[i][0];
+    if (paths.has(y)) { paths.get(y).push(s.v[i] / base.get(y - 1) - 1); segIdx.get(y).push(i); }
+  }
+  const complete = pick(yy, ydone);
+  const path = {all: [], recent: [], current: null, current_year: null,
+                n_all: complete.length, n_recent: 0, month_starts: []};
+  if (complete.length) {
+    const span = Math.trunc(median(complete.map(y => paths.get(y).length).sort((a, b) => a - b)));
+    const rec = complete.filter(y => y > complete[complete.length - 1] - RECENT_YEARS);
+    path.n_recent = rec.length;
+    const avgPath = ys => Array.from({length: span}, (_, k) =>
+      mean(ys.map(y => { const a = paths.get(y); return k < a.length ? a[k] : a[a.length - 1]; })));
+    path.all = avgPath(complete); path.recent = avgPath(rec);
+    for (let mo = 1; mo <= 12; mo++) {
+      const ks = [];
+      for (const y of complete) {
+        const f = segIdx.get(y).findIndex(i => P[i][1] >= mo);
+        if (f >= 0) ks.push(f);
+      }
+      path.month_starts.push(ks.length ? median(ks.sort((a, b) => a - b)) : null);
+    }
+  }
+  if (yPartial && paths.has(LY)) { path.current = paths.get(LY); path.current_year = LY; }
+
+  const meta = DATA.series.find(x => x.id === sid) || {};
+  return {by_month, all_months: every, grid, cycle: cycles, annual, weekday, path,
+          recent_years: RECENT_YEARS, recent_from: recentLo, cycle_filter: ph, last_date: iso(lastDay),
+          live_month: mPartial ? LM : null, measure: {name: meta.name, ticker: meta.ticker}};
+}
+function seasonalJSON(p) {
+  const sid = p.series || 'ac:s_p500';
+  const res = seasonality(sid, p.start_year, p.end_year, p.cycle);
+  if (!res) throw new Error('no prices for ' + sid);
+  return res;
+}
+function seasonalCSV(p) {
+  const res = seasonalJSON(p);
+  const fmt = (v, d = 6) => v === null || v === undefined ? '' : pyFloat(rnd(v, d));
+  let out = csvLine(['year', ...MONTHS, 'Year']);
+  for (const r of res.grid)
+    out += csvLine([r.year + (r.partial_y ? ' (YTD)' : ''), ...r.m.map(v => fmt(v)), fmt(r.year_ret)]);
+  for (const [label, key] of [['Average', 'avg'], ['Median', 'median'], ['Std dev', 'sd'], ['Win rate', 'win'],
+                              ['Best', 'best'], ['Worst', 'worst'], ['N', 'n'], ['t vs all months', 't'],
+                              [`Average last ${res.recent_years} years`, 'recent_avg']]) {
+    const line = [label, ...res.by_month.map(b => key === 'n' ? b.n : fmt(b[key], key === 't' ? 4 : 6))];
+    line.push(key === 'n' ? res.annual.n : (key === 't' || key === 'recent_avg') ? '' : fmt(res.annual[key]));
+    out += csvLine(line);
+  }
+  return out;
+}
+
 const json = (obj, status) => new Response(JSON.stringify(obj), {status: status || 200,
   headers: {'Content-Type': 'application/json'}});
 const realFetch = window.fetch.bind(window);
@@ -568,6 +727,8 @@ window.fetch = async function (input, init) {
       case '/api/rotate': return json(rotateJSON(body));
       case '/api/export.csv': return new Response(studyCSV(body), {headers: {'Content-Type': 'text/csv'}});
       case '/api/rotate.csv': return new Response(rotateCSV(body), {headers: {'Content-Type': 'text/csv'}});
+      case '/api/seasonal': return json(seasonalJSON(body));
+      case '/api/seasonal.csv': return new Response(seasonalCSV(body), {headers: {'Content-Type': 'text/csv'}});
       case '/api/update': return json({status: 'unavailable', error: 'read-only website'}, 403);
       default: return json({error: 'not found'}, 404);
     }
@@ -578,7 +739,8 @@ window.fetch = async function (input, init) {
 
 /* exposed for verification against the local app */
 window.EventStudySite = {ready: READY, study: p => study(p).json, rotate: rotateJSON,
-                         studyCSV, rotateCSV, get data() { return DATA; }};
+                         studyCSV, rotateCSV, seasonal: seasonalJSON, seasonalCSV,
+                         get data() { return DATA; }};
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', unlock);
 else unlock();

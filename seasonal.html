@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seasonality — calendar patterns by series</title>
+<link rel="stylesheet" href="app.css">
+<style>
+/* .tabs lives in app.css -- only this page's tables and chart are specific */
+td.lbl,th.lbl{text-align:left;position:sticky;left:0;background:var(--surface-1);
+  z-index:1;border-right:1px solid var(--border)}
+th.lbl{background:var(--surface-2);z-index:3}
+/* app.css offsets .hdr for a group row above it; these tables have none */
+thead tr.hdr th{top:0}
+tr.stat td.lbl{color:var(--accent)}
+td.sig{color:var(--accent);font-weight:700}
+/* the in-progress month/year: shown, never counted */
+td.live{outline:1px dashed var(--accent);outline-offset:-2px}
+th.now,td.now{box-shadow:inset 0 0 0 1px var(--accent)}
+.pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px}
+.pair .card{margin-bottom:0}
+#path{width:100%;height:250px;display:block}
+.key{display:inline-block;width:18px;height:0;border-top:2px solid;vertical-align:3px;margin-right:5px}
+.key.dash{border-top-style:dashed}
+.small{font-size:11px;color:var(--text-muted);font-weight:400}
+</style>
+<script src="site.js"></script>
+<style>#btn-update{display:none}</style>
+</head>
+<body>
+<header>
+  <h1>Seasonality</h1>
+  <nav class="tabs" style="margin:0">
+    <button onclick="location.href='./'">Event study</button>
+    <button onclick="location.href='rotate.html'">Rotation</button>
+    <button class="on">Seasonality</button>
+  </nav>
+  <span class="pill" id="p-data">loading…</span>
+  <span class="spacer"></span>
+  <button id="theme">◐</button>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Series</h2>
+    <div class="cond">
+      <select class="series" id="series"></select>
+      <label class="opt">From year <input type="number" id="y0" step="1" placeholder="first" style="width:80px"></label>
+      <label class="opt">To year <input type="number" id="y1" step="1" placeholder="latest" style="width:80px"></label>
+      <label class="opt">Years
+        <select id="cycle">
+          <option value="">all years</option>
+          <option value="0">election years</option>
+          <option value="1">post-election years</option>
+          <option value="2">midterm years</option>
+          <option value="3">pre-election years</option>
+        </select></label>
+      <span class="spacer"></span>
+      <button class="primary" id="run">Run</button>
+      <button id="csv">Export CSV</button>
+    </div>
+    <div class="presets">
+      <span class="muted" style="font-size:12px;align-self:center">Quick:</span>
+      <button data-s="ac:s_p500">S&amp;P 500</button>
+      <button data-s="ind:semiconductors_semiconductor_equipment">Semis</button>
+      <button data-s="ac:oil">Oil</button>
+      <button data-s="ac:gold">Gold</button>
+      <button data-s="ac:vix">VIX</button>
+    </div>
+    <div class="hint">Month return = last close of the month ÷ last close of the month
+      before − 1; year return is the YTD convention at year end. A series' first partial
+      month is not counted, and the month and year still in progress are shown
+      (<span style="outline:1px dashed var(--accent);padding:0 4px">dashed</span>) but
+      kept out of every statistic. Monthly returns don't overlap, so <b>t</b> — each
+      month's average against the all-month average, in standard errors — is a fair
+      test here; |t| ≥ 2 is highlighted.</div>
+  </div>
+
+  <div id="out"></div>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let SERIES = [], LAST = null;
+
+$('#theme').onclick = () => {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : cur === 'light' ? '' : 'dark';
+  if (next) document.documentElement.setAttribute('data-theme', next);
+  else document.documentElement.removeAttribute('data-theme');
+};
+
+const pct = (v, d = 1) => v == null ? '' : (v * 100).toFixed(d) + '%';
+const bp = v => v == null ? '' : (v * 1e4).toFixed(1);
+const CAP = 60;
+function heat(v, scale) {
+  if (v == null || !scale) return '';
+  const t = Math.max(-1, Math.min(1, v / scale));
+  if (!t) return '';
+  return `color-mix(in srgb, var(${t < 0 ? '--neg' : '--pos'}) ${(Math.abs(t) * CAP).toFixed(1)}%, var(--mid))`;
+}
+const maxAbs = (vals, centre = 0) =>
+  Math.max(0, ...vals.filter(v => v != null).map(v => Math.abs(v - centre))) || 0.01;
+
+function seriesOptions(sel) {
+  const groups = {industry: 'GICS industries', sector: 'GICS sectors',
+                  asset_class: 'Asset classes', benchmark: 'Benchmark'};
+  let html = '';
+  for (const g of ['asset_class', 'sector', 'industry', 'benchmark']) {
+    const rows = SERIES.filter(s => s.grp === g);
+    if (!rows.length) continue;
+    html += `<optgroup label="${groups[g]}">`;
+    for (const s of rows)
+      html += `<option value="${s.id}"${s.id === sel ? ' selected' : ''}>${s.name}</option>`;
+    html += '</optgroup>';
+  }
+  return html;
+}
+
+const payload = () => ({series: $('#series').value,
+  start_year: parseInt($('#y0').value) || null, end_year: parseInt($('#y1').value) || null,
+  cycle: $('#cycle').value === '' ? null : parseInt($('#cycle').value)});
+
+async function run() {
+  $('#run').disabled = true;
+  $('#out').innerHTML = '<div class="card muted">Computing…</div>';
+  try {
+    const r = await fetch('/api/seasonal', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload())});
+    const j = await r.json();
+    if (!r.ok) { $('#out').innerHTML = `<div class="card err">${j.error}</div>`; return; }
+    LAST = j;
+    try { localStorage.setItem('seasonal.series', $('#series').value); } catch (e) {}
+    render();
+  } catch (e) {
+    $('#out').innerHTML = `<div class="card err">${e}</div>`;
+  } finally { $('#run').disabled = false; }
+}
+$('#run').onclick = run;
+$('#series').onchange = run;
+$('#cycle').onchange = run;
+document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
+  $('#series').value = b.dataset.s; run();
+});
+$('#csv').onclick = async () => {
+  const r = await fetch('/api/seasonal.csv', {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload())});
+  const blob = await r.blob(), a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'seasonality.csv'; a.click();
+};
+
+/* ---------- render ---------- */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function render() {
+  const j = LAST, bm = j.by_month, all = j.all_months, yr = j.annual;
+  const nowM = +j.last_date.slice(5, 7) - 1;
+  const cur = bm[nowM];
+  const years = j.grid.filter(r => !r.partial_y).map(r => r.year);
+  const span = years.length ? `${Math.min(...years)}–${Math.max(...years)}` : '—';
+  const nm = (j.measure.name || $('#series').selectedOptions[0]?.textContent || '') +
+    (j.cycle_filter == null ? '' : ' · ' + $('#cycle').selectedOptions[0].textContent);
+
+  /* stat rows share the month columns with the year grid below them */
+  const STAT_ROWS = [
+    ['Average', 'avg', 'ret'], ['Median', 'median', 'ret'], ['Win rate', 'win', 'win'],
+    [`Avg last ${j.recent_years}y`, 'recent_avg', 'ret'], ['Std dev', 'sd', 'plain'],
+    ['Best', 'best', 'plain'], ['Worst', 'worst', 'plain'], ['N', 'n', 'n'],
+    ['t vs all', 't', 't'],
+  ];
+  const statCell = (b, key, kind, scale, extra = '') => {
+    const v = b[key];
+    if (kind === 'n') return `<td${extra}>${v ?? ''}</td>`;
+    if (kind === 't') return `<td class="${v != null && Math.abs(v) >= 2 ? 'sig' : ''}"${extra}>${v == null ? '' : v.toFixed(2)}</td>`;
+    if (kind === 'win') return `<td style="background:${heat(v == null ? null : v - .5, scale)}"${extra}>${v == null ? '' : (v * 100).toFixed(0) + '%'}</td>`;
+    const at = key === 'best' ? b.best_at : key === 'worst' ? b.worst_at : null;
+    return `<td style="background:${kind === 'ret' ? heat(v, scale) : ''}"${extra}${
+      at ? ` title="${at}"` : ''}>${pct(v)}${at ? ` <span class="small">${String(at).slice(2)}</span>` : ''}</td>`;
+  };
+  const statRows = STAT_ROWS.map(([lbl, key, kind]) => {
+    const sc = kind === 'win' ? maxAbs(bm.map(b => b[key]), .5) : maxAbs(bm.map(b => b[key]));
+    const tail = key === 't' || key === 'recent_avg' ? '<td class="gap"></td><td></td>'
+      : statCell(all, key, kind, sc, ' class="gap"') +
+        statCell(yr, key, kind === 'ret' ? 'plain' : kind, sc);
+    return `<tr class="stat"><td class="lbl">${lbl}</td>${
+      bm.map((b, i) => statCell(b, key, kind, sc, i === nowM ? ' data-now="1"' : '')).join('')}${tail}</tr>`;
+  }).join('');
+
+  const gScale = 2 * (all.sd || .05), yScale = 2 * (yr.sd || .2);
+  const gridRows = j.grid.map((r, ri) => `<tr${ri === 0 ? ' class="sep"' : ''}>
+      <td class="lbl">${r.year}${r.partial_y ? ' <span class="small">YTD</span>' : ''}</td>
+      ${r.m.map((v, i) => `<td class="${r.partial_m === i + 1 ? 'live' : ''}"
+         style="background:${heat(v, gScale)}"${r.partial_m === i + 1 ? ' title="in progress — not counted"' : ''}>${pct(v)}</td>`).join('')}
+      <td class="gap"></td>
+      <td class="${r.partial_y ? 'live' : ''}" style="background:${heat(r.year_ret, yScale)}">${pct(r.year_ret)}</td>
+    </tr>`).join('');
+
+  const cyc = j.cycle, cScale = maxAbs(cyc.map(c => c.avg));
+  const wk = j.weekday, wScale = maxAbs(wk.map(w => w.avg));
+
+  $('#out').innerHTML = `
+    <div class="card">
+      <div class="hero"><span class="n">${MONTHS[nowM]}</span>
+        <span class="lbl"><b>${nm}</b> · ${all.n} months, ${span} ·
+          ${MONTHS[nowM]} has averaged <b>${pct(cur.avg, 2)}</b> (median ${pct(cur.median, 2)}),
+          up in <b>${cur.win == null ? '—' : (cur.win * 100).toFixed(0) + '%'}</b> of ${cur.n} years
+          against ${pct(all.avg, 2)} / ${(all.win * 100).toFixed(0)}% for all months</span></div>
+      <div class="scroll" style="max-height:72vh"><table id="mtab">
+        <thead><tr class="hdr"><th class="lbl">Month</th>
+          ${MONTHS.map((m, i) => `<th class="${i === nowM ? 'now' : ''}">${m}</th>`).join('')}
+          <th class="gap">All</th><th title="Calendar-year return">Year</th></tr></thead>
+        <tbody>${statRows}${gridRows}</tbody>
+      </table></div>
+      <div class="legend">
+        <span><span class="ramp"></span> red = loss, teal = gain (win rate around 50%)</span>
+        <span>outlined column = the current month</span>
+        <span>Best/Worst carry the year (hover for the full year)</span>
+        <span>Year column: calendar-year statistics, not monthly</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Average path through the year <span class="small">— YTD return by session of the year</span></h2>
+      <svg id="path"></svg>
+      <div class="legend">
+        <span><span class="key" style="border-color:var(--text-secondary)"></span>all ${j.path.n_all} complete years</span>
+        <span><span class="key dash" style="border-color:var(--accent)"></span>${j.cycle_filter == null ? `last ${j.path.n_recent} years` : `those within the last ${j.recent_years} years (${j.path.n_recent})`}</span>
+        ${j.path.current ? `<span><span class="key" style="border-color:var(--pos);border-top-width:3px"></span>${j.path.current_year} so far</span>` : ''}
+      </div>
+    </div>
+
+    <div class="pair">
+      <div class="card">
+        <h2>Presidential cycle <span class="small">— calendar-year returns</span></h2>
+        <div class="scroll"><table>
+          <thead><tr class="hdr"><th class="lbl">Year of term</th><th>Average</th><th>Median</th><th>Win rate</th><th>Worst</th><th>N</th></tr></thead>
+          <tbody>${cyc.map(c => `<tr><td class="lbl${c.now ? ' now' : ''}">${c.label}${c.now ? ' <span class="tag">now</span>' : ''}</td>
+            <td style="background:${heat(c.avg, cScale)}">${pct(c.avg)}</td><td>${pct(c.median)}</td>
+            <td>${c.win == null ? '' : (c.win * 100).toFixed(0) + '%'}</td>
+            <td title="${c.worst_at ?? ''}">${pct(c.worst)}${c.worst_at ? ` <span class="small">${String(c.worst_at).slice(2)}</span>` : ''}</td><td>${c.n}</td></tr>`).join('')}
+            <tr class="stat sep"><td class="lbl">All years</td><td>${pct(yr.avg)}</td><td>${pct(yr.median)}</td>
+              <td>${yr.win == null ? '' : (yr.win * 100).toFixed(0) + '%'}</td><td>${pct(yr.worst)}</td><td>${yr.n}</td></tr>
+          </tbody></table></div>
+        <div class="hint">Election years are those divisible by 4. ~24 observations per
+          phase — read the spread, not just the average.</div>
+      </div>
+      <div class="card">
+        <h2>Day of week <span class="small">— 1-day returns, basis points</span></h2>
+        <div class="scroll"><table>
+          <thead><tr class="hdr"><th class="lbl">Day</th><th>Avg (bp)</th><th>Median (bp)</th><th>Win rate</th><th>Std dev (bp)</th><th>N</th></tr></thead>
+          <tbody>${wk.map(w => `<tr><td class="lbl">${w.label}</td>
+            <td style="background:${heat(w.avg, wScale)}">${bp(w.avg)}</td><td>${bp(w.median)}</td>
+            <td>${(w.win * 100).toFixed(0)}%</td><td>${bp(w.sd)}</td><td>${w.n}</td></tr>`).join('')}
+          </tbody></table></div>
+        <div class="hint">Return from the previous session's close, so Monday
+          includes the weekend.</div>
+      </div>
+    </div>`;
+
+  /* the current-month column outline, on the stat rows as well as the header */
+  const now = document.querySelectorAll('#mtab td[data-now]');
+  now.forEach(td => td.classList.add('now'));
+  drawPath(j);
+}
+
+/* ---------- chart: average YTD path ---------- */
+function drawPath(j) {
+  const svg = $('#path'), pa = j.path;
+  if (!svg || !pa.all.length) return;
+  const W = svg.clientWidth || 900, H = 250, m = {t: 12, r: 14, b: 22, l: 52};
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const n = Math.max(pa.all.length, pa.current ? pa.current.length : 0);
+  const lines = [pa.all, pa.recent, pa.current].filter(Boolean);
+  const vals = lines.flat().concat([0]);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const pad = (hi - lo) * .08 || .01; lo -= pad; hi += pad;
+  const X = k => m.l + (k + 1) / n * iw;
+  const Y = v => m.t + ih - (v - lo) / (hi - lo) * ih;
+  const path = arr => 'M' + X(-1).toFixed(1) + ' ' + Y(0).toFixed(1) +
+    arr.map((v, k) => 'L' + X(k).toFixed(1) + ' ' + Y(v).toFixed(1)).join('');
+  const step = (hi - lo) > .3 ? .1 : (hi - lo) > .12 ? .05 : (hi - lo) > .05 ? .02 : .01;
+  const yt = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) yt.push(+v.toFixed(4));
+
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML =
+    yt.map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"
+        stroke="${v === 0 ? 'var(--border-strong)' : 'var(--border)'}" stroke-width="1"/>
+      <text x="${m.l - 7}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="10"
+        fill="var(--text-muted)">${(v * 100).toFixed(0)}%</text>`).join('') +
+    pa.month_starts.map((k, i) => k == null ? '' : `<text x="${X(k - 1).toFixed(1)}" y="${H - 6}"
+        font-size="10" fill="var(--text-muted)">${MONTHS[i]}</text>`).join('') +
+    `<path d="${path(pa.all)}" fill="none" stroke="var(--text-secondary)" stroke-width="2" stroke-linejoin="round"/>` +
+    `<path d="${path(pa.recent)}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round"/>` +
+    (pa.current ? `<path d="${path(pa.current)}" fill="none" stroke="var(--pos)" stroke-width="2.5" stroke-linejoin="round"/>` : '') +
+    `<line id="pcross" y1="${m.t}" y2="${m.t + ih}" stroke="var(--border-strong)" stroke-width="1" style="display:none"/>`;
+
+  const tip = $('#tip'), cross = svg.querySelector('#pcross');
+  svg.onmousemove = ev => {
+    const r = svg.getBoundingClientRect();
+    const px = (ev.clientX - r.left) * (W / r.width);
+    const k = Math.round((px - m.l) / iw * n) - 1;
+    if (k < 0 || k >= n) { tip.style.display = 'none'; cross.style.display = 'none'; return; }
+    let mi = 0; pa.month_starts.forEach((s, i) => { if (s != null && s <= k) mi = i; });
+    cross.style.display = ''; cross.setAttribute('x1', X(k)); cross.setAttribute('x2', X(k));
+    tip.style.display = 'block';
+    tip.innerHTML = `<b>Session ${k + 1}</b> <span class="muted">(~${MONTHS[mi]})</span><br>` +
+      `All years ${pct(pa.all[k], 2)}<br>Last ${pa.n_recent}y ${pct(pa.recent[k], 2)}` +
+      (pa.current && k < pa.current.length ? `<br>${pa.current_year} ${pct(pa.current[k], 2)}` : '');
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 170) + 'px';
+    tip.style.top = (ev.clientY - 10) + 'px';
+  };
+  svg.onmouseleave = () => { tip.style.display = 'none'; cross.style.display = 'none'; };
+}
+let rzTimer;
+addEventListener('resize', () => {
+  clearTimeout(rzTimer);
+  rzTimer = setTimeout(() => { if (LAST && $('#path')) drawPath(LAST); }, 150);
+});
+
+(async () => {
+  SERIES = await (await fetch('/api/series')).json();
+  let sel = 'ac:s_p500';
+  try { sel = localStorage.getItem('seasonal.series') || sel; } catch (e) {}
+  if (!SERIES.some(s => s.id === sel)) sel = 'ac:s_p500';
+  $('#series').innerHTML = seriesOptions(sel);
+  const s = await (await fetch('/api/status')).json();
+  $('#p-data').innerHTML = `data through <b>${s.data_through || '—'}</b>`;
+  run();
+})();
+</script>
+</body>
+</html>

@@ -30,6 +30,7 @@ tr.secrow td.name{background:var(--surface-2);text-transform:uppercase;
   <nav class="tabs" style="margin:0">
     <button onclick="location.href='./'">Event study</button>
     <button class="on">Rotation</button>
+    <button onclick="location.href='seasonal.html'">Seasonality</button>
   </nav>
   <span class="pill" id="p-data">loading…</span>
   <span class="spacer"></span>
@@ -62,6 +63,7 @@ tr.secrow td.name{background:var(--surface-2);text-transform:uppercase;
       <button data-preset="vix30">VIX above 30</button>
       <button data-preset="spxdown5">S&amp;P 500 5 down days in a row</button>
       <button data-preset="spxdown5x">S&amp;P 500 5+ down days, −5% or worse</button>
+      <button data-preset="midoct">Midterm-year October</button>
       <button data-preset="oil">Oil −25% from 52W high</button>
     </div>
     <div class="hint">Forward returns for every series in the universe, measured from
@@ -113,6 +115,12 @@ function seriesOptions(sel) {
 /* An up/down streak row carries an optional total-move box: "5 down days in a row,
    down 5% or more in total". It is sent as a second, ANDed streak_ret condition. */
 const STREAK = ['up_streak', 'down_streak'];
+/* Calendar criteria pick a value from a list instead of taking a threshold, and are
+   sent as "==". cycle_year is year % 4, as in engine.metric_series. */
+const CAL = {
+  cycle_year: [[0, 'Election year'], [1, 'Post-election year'], [2, 'Midterm year'], [3, 'Pre-election year']],
+  month: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((m, i) => [i + 1, m]),
+};
 function addCond(series, metric, op, value, move) {
   const div = document.createElement('div');
   div.className = 'cond';
@@ -123,12 +131,22 @@ function addCond(series, metric, op, value, move) {
      <select class="op">${['<=', '>=', '<', '>'].map(o =>
        `<option${o === op ? ' selected' : ''}>${o}</option>`).join('')}</select>
      <input type="number" class="val" value="${value}" step="0.5">
+     <select class="pick"></select>
      <span class="streak-move"><span class="dir"></span> &ge;
        <input type="number" class="move" value="${move ?? ''}" min="0" step="0.5"
               placeholder="any" title="Total move over the run, from the close before it began. Blank = any size."> %</span>
      <button class="rm" title="remove">✕</button>`;
   const met = div.querySelector('.metric'), mv = div.querySelector('.streak-move');
+  const pick = div.querySelector('.pick');
   const sync = () => {
+    const cal = CAL[met.value];
+    div.querySelector('.op').hidden = div.querySelector('.val').hidden = !!cal;
+    pick.hidden = !cal;
+    if (cal && pick.dataset.for !== met.value) {
+      pick.innerHTML = cal.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+      if (met.value === metric && cal.some(([v]) => v === value)) pick.value = value;
+      pick.dataset.for = met.value;
+    }
     mv.hidden = !STREAK.includes(met.value);
     mv.querySelector('.dir').textContent = met.value === 'up_streak' ? '& up' : '& down';
   };
@@ -147,6 +165,7 @@ function readConds() {
       op: d.querySelector('.op').value,
       value: parseFloat(d.querySelector('.val').value),
     };
+    if (CAL[c.metric]) { c.op = '=='; c.value = parseFloat(d.querySelector('.pick').value); }
     const move = parseFloat(d.querySelector('.move').value);
     if (!STREAK.includes(c.metric) || !(move > 0)) return [c];
     const up = c.metric === 'up_streak';
@@ -162,6 +181,7 @@ const PRESETS = {
   vix30:   [['ac:vix', 'price', '>=', 30]],
   spxdown5: [['ac:s_p500', 'down_streak', '>=', 5]],
   spxdown5x: [['ac:s_p500', 'down_streak', '>=', 5, 5]],
+  midoct:  [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'month', '==', 10]],
   oil:     [['ac:oil', 'dd_52w_high', '<=', -25]],
 };
 document.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
