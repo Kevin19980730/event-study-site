@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Event Study — GICS industries, sectors & asset classes</title>
-<link rel="stylesheet" href="app.css?v=134be995de">
-<script src="site.js?v=8cbd63ab7d"></script>
+<link rel="stylesheet" href="app.css?v=f2babcc3b6">
+<script src="site.js?v=76346b89c8"></script>
 <style>#btn-update{display:none}</style>
 </head>
 <body>
@@ -47,6 +47,10 @@
         <span class="muted">by</span>
         <select id="topdir"><option value="lowest">lowest</option><option value="highest">highest</option></select>
         <select id="topcol"></select></label>
+      <label class="opt" title="Sessions before and after each event drawn on the daily path chart (day 0 = event close = 0%)">Path
+        &minus;<input type="number" id="ppre" value="10" min="0" max="252" step="1" style="width:4.5em">
+        +<input type="number" id="ppost" value="21" min="0" max="252" step="1" style="width:4.5em">
+        <span class="muted">sessions</span></label>
       <label class="opt">From <input type="date" id="start"></label>
       <label class="opt">To <input type="date" id="end"></label>
       <span class="spacer"></span>
@@ -129,12 +133,15 @@ function seriesOptions(sel) {
 const STREAK = ['up_streak', 'down_streak'];
 /* Calendar criteria pick a value from a list instead of taking a threshold, and are
    sent as "==". cycle_year is year % 4, election_day is sessions from US election
-   day (even years only), as in engine.metric_series. */
+   day (even years only; midterm_day / pres_day keep one kind), as in engine.metric_series. */
+const ELECTION_PICK = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5].map(k => [k,
+    k === 0 ? 'Election day' : k === -1 ? 'Day before (−1)' : k === 1 ? 'Day after (+1)'
+    : (k > 0 ? '+' : '−') + Math.abs(k) + ' sessions']);
 const CAL = {
   cycle_year: [[0, 'Election year'], [1, 'Post-election year'], [2, 'Midterm year'], [3, 'Pre-election year']],
-  election_day: [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5].map(k => [k,
-    k === 0 ? 'Election day' : k === -1 ? 'Day before (−1)' : k === 1 ? 'Day after (+1)'
-    : (k > 0 ? '+' : '−') + Math.abs(k) + ' sessions']),
+  election_day: ELECTION_PICK,
+  midterm_day: ELECTION_PICK,
+  pres_day: ELECTION_PICK,
   month: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((m, i) => [i + 1, m]),
 };
 function addCond(series, metric, op, value, move) {
@@ -201,10 +208,10 @@ const PRESETS = {
   semis20spx: [['ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20],
                ['ac:s_p500', 'dd_52w_high', '<=', -10]],
   midoct:  [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'month', '==', 10]],
-  midpre:  [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'election_day', '==', -1]],
-  midpost: [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'election_day', '==', 1]],
-  prespre:  [['ac:s_p500', 'cycle_year', '==', 0], ['ac:s_p500', 'election_day', '==', -1]],
-  prespost: [['ac:s_p500', 'cycle_year', '==', 0], ['ac:s_p500', 'election_day', '==', 1]],
+  midpre:  [['ac:s_p500', 'midterm_day', '==', -1]],
+  midpost: [['ac:s_p500', 'midterm_day', '==', 1]],
+  prespre:  [['ac:s_p500', 'pres_day', '==', -1]],
+  prespost: [['ac:s_p500', 'pres_day', '==', 1]],
   oil:        [['ac:oil', 'dd_52w_high', '<=', -25]],
   spxworst:   {conds: [['ac:s_p500', 'ret_1d', '<=', -3]], mode: 'every_day', gap: 0,
                top: [10, 'lowest', 'Last 1D']},
@@ -243,7 +250,8 @@ function payload() {
           mode: $('#mode').value, min_gap: parseInt($('#gap').value || 0),
           start: $('#start').value, end: $('#end').value,
           top_n: parseInt($('#topn').value || 0), top_dir: $('#topdir').value,
-          top_col: $('#topcol').value};
+          top_col: $('#topcol').value,
+          path_pre: $('#ppre').value, path_post: $('#ppost').value};
 }
 async function run() {
   $('#run').disabled = true;
@@ -381,6 +389,18 @@ function render(j) {
       </div>
     </div>
 
+    ${j.paths ? `<div class="card">
+      <h2>Daily path around each event</h2>
+      <svg id="paths"></svg>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--accent)"></span>average of all events</span>
+        <span><span class="sw" style="background:var(--pos)"></span>ended the window up</span>
+        <span><span class="sw" style="background:var(--neg)"></span>ended down</span>
+        <span>day 0 = event-date close = 0%; x axis in trading sessions. Hover a line for its values.</span>
+      </div>
+    </div>` : j.n_events ? `<div class="card hint">The daily path chart is drawn for up to 100 events
+      (this study has ${j.n_events}) &mdash; narrow it with Top X or Min gap.</div>` : ''}
+
     <div class="card">
       <h2>Event returns</h2>
       ${ranked ? `<div class="hint" style="margin:0 0 8px">Ranked by ${REQ.top_dir} ${rankLabel(RK)}
@@ -438,6 +458,102 @@ function render(j) {
     </div>`;
 
   drawChart(j);
+  if (j.paths) drawPaths(j.paths);
+}
+
+/* ---------- chart: each event's daily path, rebased so the event close is 0% ---------- */
+function drawPaths(P) {
+  const svg = $('#paths'), off = P.offsets;
+  const W = svg.clientWidth || 900, H = 380, m = {t: 12, r: 70, b: 24, l: 52};
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const all = P.events.flatMap(e => e.path).filter(v => v !== null);
+  let lo = Math.min(0, ...all), hi = Math.max(0, ...all);
+  const pad = (hi - lo) * 0.04 || 0.01; lo -= pad; hi += pad;
+  const k0 = off[0], k1 = off[off.length - 1] === k0 ? k0 + 1 : off[off.length - 1];
+  const X = k => m.l + (k - k0) / (k1 - k0) * iw;
+  const Y = v => m.t + ih - (v - lo) / (hi - lo) * ih;
+  const line = path => {
+    let d = '';
+    path.forEach((v, j) => { if (v !== null) d += (d ? 'L' : 'M') + X(off[j]).toFixed(1) + ' ' + Y(v).toFixed(1); });
+    return d;
+  };
+  const lastOf = path => { for (let j = path.length - 1; j >= 0; j--) if (path[j] !== null) return j; return -1; };
+  /* label by year; two events in one year get their full date */
+  const yrs = {};
+  P.events.forEach(e => { const y = e.date.slice(0, 4); yrs[y] = (yrs[y] || 0) + 1; });
+  const lbl = e => yrs[e.date.slice(0, 4)] > 1 ? e.date : e.date.slice(0, 4);
+
+  /* y ticks at a round % step */
+  const raw = (hi - lo) / 6, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = ([1, 2, 2.5, 5, 10].find(f => f * mag >= raw) || 10) * mag;
+  const yt = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) yt.push(Math.abs(v) < step / 1e6 ? 0 : v);
+  const xstep = Math.max(1, Math.ceil((k1 - k0) / 12 / 5) * 5);
+  const xt = off.filter(k => k % xstep === 0);
+
+  /* end labels, nudged apart so they don't overprint */
+  const ends = P.events.map((e, i) => {
+    const j = lastOf(e.path);
+    return j < 0 ? null : {i, x: X(off[j]), y: Y(e.path[j]), v: e.path[j], t: lbl(e)};
+  }).filter(Boolean).sort((a, b) => a.y - b.y);
+  ends.forEach((e, n) => { e.ly = n ? Math.max(e.y, ends[n - 1].ly + 11) : e.y; });
+  const over = ends.length ? ends[ends.length - 1].ly - (m.t + ih + 4) : 0;
+  if (over > 0) ends.forEach(e => { e.ly -= over; });
+
+  const col = v => v >= 0 ? 'var(--pos)' : 'var(--neg)';
+  const pct = v => (v >= 0 ? '+' : '') + (v * 100).toFixed(Math.abs(v) < 0.1 ? 2 : 1) + '%';
+  const dp = step * 100 < 1 ? 1 : 0;
+  svg.style.height = H + 'px';
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML =
+    yt.map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"
+        stroke="${v === 0 ? 'var(--border-strong)' : 'var(--border)'}" stroke-width="1"${v === 0 ? ' stroke-dasharray="4 3"' : ''}/>
+      <text x="${m.l - 7}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="10"
+        fill="var(--text-muted)">${(v * 100).toFixed(dp)}%</text>`).join('') +
+    xt.map(k => `<text x="${X(k).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10"
+        fill="var(--text-muted)">${k > 0 ? '+' + k : k}</text>`).join('') +
+    `<line x1="${X(0).toFixed(1)}" x2="${X(0).toFixed(1)}" y1="${m.t}" y2="${m.t + ih}"
+       stroke="var(--border-strong)" stroke-width="1.5"/>` +
+    P.events.map((e, i) => {
+      const j = lastOf(e.path);
+      return `<path class="ev" data-i="${i}" d="${line(e.path)}" fill="none" stroke="${col(j < 0 ? 0 : e.path[j])}"
+        stroke-width="1.3" stroke-opacity="0.55" stroke-linejoin="round"/>`;
+    }).join('') +
+    `<path d="${line(P.avg)}" fill="none" stroke="var(--accent)" stroke-width="2.6" stroke-linejoin="round"/>` +
+    ends.map(e => `<text class="ev-l" data-i="${e.i}" x="${(e.x + 5).toFixed(1)}" y="${(e.ly + 3.5).toFixed(1)}"
+        font-size="10" fill="${col(e.v)}">${e.t}</text>`).join('') +
+    `<line id="pcross" y1="${m.t}" y2="${m.t + ih}" stroke="var(--border-strong)" stroke-width="1" style="display:none"/>`;
+
+  const tip = $('#tip'), cross = svg.querySelector('#pcross');
+  const focus = i => svg.querySelectorAll('.ev, .ev-l').forEach(el => {
+    const on = i === null || +el.dataset.i === i;
+    el.style.opacity = on ? '' : 0.12;
+    if (el.tagName === 'path') {
+      el.setAttribute('stroke-opacity', i !== null && on ? 1 : 0.55);
+      el.setAttribute('stroke-width', i !== null && on ? 2.4 : 1.3);
+    }
+  });
+  svg.onmousemove = ev => {
+    const r = svg.getBoundingClientRect();
+    const px = (ev.clientX - r.left) * (W / r.width), py = (ev.clientY - r.top) * (H / r.height);
+    if (px < m.l || px > W - m.r) { tip.style.display = 'none'; cross.style.display = 'none'; focus(null); return; }
+    const j = Math.max(0, Math.min(off.length - 1, Math.round((px - m.l) / iw * (k1 - k0))));
+    /* nearest event line at this session */
+    let best = null, bd = 14;
+    P.events.forEach((e, i) => {
+      const v = e.path[j];
+      if (v !== null && Math.abs(Y(v) - py) < bd) { bd = Math.abs(Y(v) - py); best = i; }
+    });
+    focus(best);
+    cross.style.display = ''; cross.setAttribute('x1', X(off[j])); cross.setAttribute('x2', X(off[j]));
+    tip.style.display = 'block';
+    tip.innerHTML = `<b>day ${off[j] > 0 ? '+' : ''}${off[j]}</b><br>` +
+      (best !== null ? `${P.events[best].date}: ${pct(P.events[best].path[j])}<br>` : '') +
+      (P.avg[j] !== null ? `average: ${pct(P.avg[j])}` : '');
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 170) + 'px';
+    tip.style.top = (ev.clientY - 10) + 'px';
+  };
+  svg.onmouseleave = () => { tip.style.display = 'none'; cross.style.display = 'none'; focus(null); };
 }
 
 /* ---------- chart: log-scale line + event markers ---------- */
@@ -512,7 +628,8 @@ function drawChart(j) {
 let rzTimer;
 addEventListener('resize', () => {
   clearTimeout(rzTimer);
-  rzTimer = setTimeout(() => { if (LAST && document.querySelector('#chart')) drawChart(LAST); }, 150);
+  rzTimer = setTimeout(() => { if (LAST && document.querySelector('#chart')) drawChart(LAST);
+    if (LAST?.paths && document.querySelector('#paths')) drawPaths(LAST.paths); }, 150);
 });
 
 /* ---------- status / update ---------- */

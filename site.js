@@ -229,6 +229,10 @@ function metricSeries(sid, metric) {
   else if (metric === 'cycle_year') out = Float64Array.from(s.d, d => yearOf(d) % 4);
   else if (metric === 'month') out = Float64Array.from(s.d, d => new Date(d * DAY).getUTCMonth() + 1);
   else if (metric === 'election_day') out = electionOffset(s.d);
+  else if (metric === 'midterm_day' || metric === 'pres_day') {
+    const cy = metric === 'midterm_day' ? 2 : 0;
+    out = electionOffset(s.d).map((o, i) => yearOf(s.d[i]) % 4 === cy ? o : NaN);
+  }
   else if (metric === 'up_streak' || metric === 'down_streak') {
     /* run of consecutive up/down closes ending on each day; a flat close breaks it */
     const up = metric === 'up_streak';
@@ -257,7 +261,7 @@ function metricSeries(sid, metric) {
   mcache.set(key, out);
   return out;
 }
-const PCT = id => !['price', 'up_streak', 'down_streak', 'cycle_year', 'month', 'election_day'].includes(id);
+const PCT = id => !['price', 'up_streak', 'down_streak', 'cycle_year', 'month', 'election_day', 'midterm_day', 'pres_day'].includes(id);
 function applyOp(x, op, val) {
   if (op === '==') return x === val;
   if (op === '<=') return x <= val;
@@ -325,6 +329,22 @@ function eventTable(days, sid, cols) {
   return out;
 }
 
+/* daily close around each event rebased to the event-day close; as engine.event_paths */
+const PATH_MAX_EVENTS = 100;
+function eventPaths(rows, s, pre, post) {
+  if (rows.length > PATH_MAX_EVENTS) return null;
+  const offsets = [];
+  for (let k = -pre; k <= post; k++) offsets.push(k);
+  const events = rows.map(r => ({date: iso(r.day), path: offsets.map(k => {
+    const i = r.pos + k;
+    return i >= 0 && i < s.v.length ? s.v[i] / s.v[r.pos] - 1 : null;
+  })}));
+  const avg = offsets.map((_, j) => {
+    const xs = events.map(e => e.path[j]).filter(x => x !== null);
+    return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+  });
+  return {offsets, events, avg};
+}
 const finite = x => typeof x === 'number' && Number.isFinite(x);
 function median(sorted) {
   const n = sorted.length;
@@ -482,6 +502,8 @@ function study(payload) {
   for (let i = 0; i < s.v.length; i += step) idx.push(i);
   if (s.v.length && idx[idx.length - 1] !== s.v.length - 1) idx.push(s.v.length - 1);
   const meta = DATA.series.find(x => x.id === kw.measure) || {};
+  const win = (k, d) => Math.min(Math.max(parseInt(payload[k] == null || payload[k] === '' ? d : payload[k]), 0), 252);
+  const paths = table.length ? eventPaths(table, s, win('path_pre', 10), win('path_post', 21)) : null;
   return {
     kw, table, days,
     json: {
@@ -493,6 +515,7 @@ function study(payload) {
       measure: {name: meta.name, ticker: meta.ticker}, measure_id: kw.measure,
       chart: {dates: idx.map(i => iso(s.d[i])), levels: idx.map(i => s.v[i]),
               events: table.map(r => iso(r.day))},
+      paths,
     },
   };
 }

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rotation — what to own after the event</title>
-<link rel="stylesheet" href="app.css?v=134be995de">
+<link rel="stylesheet" href="app.css?v=f2babcc3b6">
 <style>
 /* .tabs lives in app.css -- only the results-table spacing is page-specific */
 #out .tabs{margin-bottom:12px}
@@ -21,7 +21,7 @@ tr.secrow td.name{background:var(--surface-2);text-transform:uppercase;
   font-size:11px;letter-spacing:.04em}
 .sub{font-size:11px;color:var(--text-muted);display:block;font-weight:400}
 </style>
-<script src="site.js?v=8cbd63ab7d"></script>
+<script src="site.js?v=76346b89c8"></script>
 <style>#btn-update{display:none}</style>
 </head>
 <body>
@@ -121,12 +121,15 @@ function seriesOptions(sel) {
 const STREAK = ['up_streak', 'down_streak'];
 /* Calendar criteria pick a value from a list instead of taking a threshold, and are
    sent as "==". cycle_year is year % 4, election_day is sessions from US election
-   day (even years only), as in engine.metric_series. */
+   day (even years only; midterm_day / pres_day keep one kind), as in engine.metric_series. */
+const ELECTION_PICK = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5].map(k => [k,
+    k === 0 ? 'Election day' : k === -1 ? 'Day before (−1)' : k === 1 ? 'Day after (+1)'
+    : (k > 0 ? '+' : '−') + Math.abs(k) + ' sessions']);
 const CAL = {
   cycle_year: [[0, 'Election year'], [1, 'Post-election year'], [2, 'Midterm year'], [3, 'Pre-election year']],
-  election_day: [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5].map(k => [k,
-    k === 0 ? 'Election day' : k === -1 ? 'Day before (−1)' : k === 1 ? 'Day after (+1)'
-    : (k > 0 ? '+' : '−') + Math.abs(k) + ' sessions']),
+  election_day: ELECTION_PICK,
+  midterm_day: ELECTION_PICK,
+  pres_day: ELECTION_PICK,
   month: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((m, i) => [i + 1, m]),
 };
 function addCond(series, metric, op, value, move) {
@@ -190,10 +193,10 @@ const PRESETS = {
   spxdown5: [['ac:s_p500', 'down_streak', '>=', 5]],
   spxdown5x: [['ac:s_p500', 'down_streak', '>=', 5, 5]],
   midoct:  [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'month', '==', 10]],
-  midpre:  [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'election_day', '==', -1]],
-  midpost: [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'election_day', '==', 1]],
-  prespre:  [['ac:s_p500', 'cycle_year', '==', 0], ['ac:s_p500', 'election_day', '==', -1]],
-  prespost: [['ac:s_p500', 'cycle_year', '==', 0], ['ac:s_p500', 'election_day', '==', 1]],
+  midpre:  [['ac:s_p500', 'midterm_day', '==', -1]],
+  midpost: [['ac:s_p500', 'midterm_day', '==', 1]],
+  prespre:  [['ac:s_p500', 'pres_day', '==', -1]],
+  prespost: [['ac:s_p500', 'pres_day', '==', 1]],
   oil:     [['ac:oil', 'dd_52w_high', '<=', -25]],
 };
 document.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
