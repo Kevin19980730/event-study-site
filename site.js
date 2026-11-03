@@ -199,6 +199,26 @@ function ytdReturn(s) {
   }
   return out;
 }
+/* sessions from each even year's US election day (Tuesday after the first Monday of
+   November): 0 = that session, -1 / +1 = the closes either side; as engine.election_offset */
+const ELECTION_SPAN = 10;
+function electionOffset(d) {
+  const n = d.length, out = new Float64Array(n).fill(NaN);
+  if (!n) return out;
+  const y0 = yearOf(d[0]), y1 = yearOf(d[n - 1]);
+  for (let y = y0 - (y0 % 2); y <= y1; y += 2) {
+    const nov1 = Date.UTC(y, 10, 1) / DAY, wd = (new Date(nov1 * DAY).getUTCDay() + 6) % 7;
+    const e = nov1 + ((7 - wd) % 7) + 1;
+    const pos = lowerBound(d, e);
+    if (pos === 0) continue;
+    const open = pos < n && d[pos] === e;
+    for (let i = Math.max(pos - ELECTION_SPAN, 0); i < Math.min(pos + ELECTION_SPAN + 1, n); i++) {
+      const o = i - pos + (open || i < pos ? 0 : 1);
+      if (Math.abs(o) <= ELECTION_SPAN) out[i] = o;
+    }
+  }
+  return out;
+}
 const mcache = new Map();
 function metricSeries(sid, metric) {
   const key = sid + '|' + metric;
@@ -208,6 +228,7 @@ function metricSeries(sid, metric) {
   if (metric === 'price') out = v;
   else if (metric === 'cycle_year') out = Float64Array.from(s.d, d => yearOf(d) % 4);
   else if (metric === 'month') out = Float64Array.from(s.d, d => new Date(d * DAY).getUTCMonth() + 1);
+  else if (metric === 'election_day') out = electionOffset(s.d);
   else if (metric === 'up_streak' || metric === 'down_streak') {
     /* run of consecutive up/down closes ending on each day; a flat close breaks it */
     const up = metric === 'up_streak';
@@ -236,7 +257,7 @@ function metricSeries(sid, metric) {
   mcache.set(key, out);
   return out;
 }
-const PCT = id => !['price', 'up_streak', 'down_streak', 'cycle_year', 'month'].includes(id);
+const PCT = id => !['price', 'up_streak', 'down_streak', 'cycle_year', 'month', 'election_day'].includes(id);
 function applyOp(x, op, val) {
   if (op === '==') return x === val;
   if (op === '<=') return x <= val;

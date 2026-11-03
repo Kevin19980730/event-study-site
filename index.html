@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Event Study — GICS industries, sectors & asset classes</title>
 <link rel="stylesheet" href="app.css?v=134be995de">
-<script src="site.js?v=fd4327e81d"></script>
+<script src="site.js?v=8cbd63ab7d"></script>
 <style>#btn-update{display:none}</style>
 </head>
 <body>
@@ -63,6 +63,8 @@
       <button data-preset="spxdown5x">S&amp;P 500 5+ down days, −5% or worse</button>
       <button data-preset="semis20spx">Semis −20% while S&amp;P 500 −10%</button>
       <button data-preset="midoct">Midterm-year October</button>
+      <button data-preset="midpre">Midterm: day before election</button>
+      <button data-preset="midpost">Midterm: day after election</button>
       <button data-preset="oil">Oil −25% from 52W high</button>
       <button data-preset="spxworst">S&amp;P 500 10 worst days</button>
     </div>
@@ -124,9 +126,13 @@ function seriesOptions(sel) {
    down 5% or more in total". It is sent as a second, ANDed streak_ret condition. */
 const STREAK = ['up_streak', 'down_streak'];
 /* Calendar criteria pick a value from a list instead of taking a threshold, and are
-   sent as "==". cycle_year is year % 4, as in engine.metric_series. */
+   sent as "==". cycle_year is year % 4, election_day is sessions from US election
+   day (even years only), as in engine.metric_series. */
 const CAL = {
   cycle_year: [[0, 'Election year'], [1, 'Post-election year'], [2, 'Midterm year'], [3, 'Pre-election year']],
+  election_day: [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5].map(k => [k,
+    k === 0 ? 'Election day' : k === -1 ? 'Day before (−1)' : k === 1 ? 'Day after (+1)'
+    : (k > 0 ? '+' : '−') + Math.abs(k) + ' sessions']),
   month: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((m, i) => [i + 1, m]),
 };
 function addCond(series, metric, op, value, move) {
@@ -193,6 +199,8 @@ const PRESETS = {
   semis20spx: [['ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20],
                ['ac:s_p500', 'dd_52w_high', '<=', -10]],
   midoct:  [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'month', '==', 10]],
+  midpre:  [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'election_day', '==', -1]],
+  midpost: [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'election_day', '==', 1]],
   oil:        [['ac:oil', 'dd_52w_high', '<=', -25]],
   spxworst:   {conds: [['ac:s_p500', 'ret_1d', '<=', -3]], mode: 'every_day', gap: 0,
                top: [10, 'lowest', 'Last 1D']},
