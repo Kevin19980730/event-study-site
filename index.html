@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Event Study — GICS industries, sectors & asset classes</title>
-<link rel="stylesheet" href="app.css?v=f2babcc3b6">
+<link rel="stylesheet" href="app.css?v=a407fae707">
 <script src="site.js?v=c70b7eecfa"></script>
 <style>#btn-update{display:none}</style>
 </head>
@@ -47,15 +47,6 @@
         <span class="muted">by</span>
         <select id="topdir"><option value="lowest">lowest</option><option value="highest">highest</option></select>
         <select id="topcol"></select></label>
-      <label class="opt" title="Sessions before and after each event drawn on the daily path chart (day 0 = event close = 0%)">Path
-        <span class="muted">before</span>
-        <select id="ppre"><option value="0">none</option><option value="5">1W</option>
-          <option value="10" selected>2W</option><option value="21">1M</option><option value="63">3M</option>
-          <option value="126">6M</option><option value="252">12M</option></select>
-        <span class="muted">after</span>
-        <select id="ppost"><option value="5">1W</option><option value="10">2W</option>
-          <option value="21" selected>1M</option><option value="63">3M</option><option value="126">6M</option>
-          <option value="252">12M</option><option value="378">18M</option></select></label>
       <label class="opt">From <input type="date" id="start"></label>
       <label class="opt">To <input type="date" id="end"></label>
       <span class="spacer"></span>
@@ -256,7 +247,7 @@ function payload() {
           start: $('#start').value, end: $('#end').value,
           top_n: parseInt($('#topn').value || 0), top_dir: $('#topdir').value,
           top_col: $('#topcol').value,
-          path_pre: $('#ppre').value, path_post: $('#ppost').value};
+          path_pre: PATH.pre, path_post: PATH.post};
 }
 async function run() {
   $('#run').disabled = true;
@@ -395,7 +386,12 @@ function render(j) {
     </div>
 
     ${j.paths ? `<div class="card">
-      <h2>Daily path around each event</h2>
+      <div class="path-head">
+        <h2>Daily path around each event</h2>
+        <label class="opt" title="Trading days drawn before and after each event (day 0 = event close = 0%)">
+          <span class="muted">before</span> ${pathPick('pre')}
+          <span class="muted">after</span> ${pathPick('post')}</label>
+      </div>
       <svg id="paths"></svg>
       <div class="legend">
         <span><span class="sw" style="background:var(--accent)"></span>average of all events</span>
@@ -463,8 +459,21 @@ function render(j) {
     </div>`;
 
   drawChart(j);
-  if (j.paths) drawPaths(j.paths);
+  if (j.paths) {
+    document.querySelectorAll('.path-pick').forEach(s => s.onchange = () => { PATH[s.dataset.k] = +s.value; run(); });
+    drawPaths(j.paths);
+  }
 }
+
+/* path chart window, in trading days on the table's horizon convention; the pickers
+   sit on the chart card, which is re-rendered every run, so the choice lives here */
+const PATH = {pre: 10, post: 21};
+const PATH_OPTS = {
+  pre: [[0, 'none'], [5, '1W'], [10, '2W'], [21, '1M'], [63, '3M'], [126, '6M'], [252, '12M']],
+  post: [[5, '1W'], [10, '2W'], [21, '1M'], [63, '3M'], [126, '6M'], [252, '12M'], [378, '18M']],
+};
+const pathPick = k => `<select class="path-pick" data-k="${k}">${PATH_OPTS[k].map(([v, l]) =>
+  `<option value="${v}"${v === PATH[k] ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
 
 /* ---------- chart: each event's daily path, rebased so the event close is 0% ---------- */
 function drawPaths(P) {
@@ -483,10 +492,7 @@ function drawPaths(P) {
     return d;
   };
   const lastOf = path => { for (let j = path.length - 1; j >= 0; j--) if (path[j] !== null) return j; return -1; };
-  /* label by year; two events in one year get their full date */
-  const yrs = {};
-  P.events.forEach(e => { const y = e.date.slice(0, 4); yrs[y] = (yrs[y] || 0) + 1; });
-  const lbl = e => yrs[e.date.slice(0, 4)] > 1 ? e.date : e.date.slice(0, 4);
+  const lbl = e => e.date.slice(0, 4);
 
   /* y ticks at a round % step */
   const raw = (hi - lo) / 6, mag = Math.pow(10, Math.floor(Math.log10(raw)));
