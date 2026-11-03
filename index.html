@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Event Study — GICS industries, sectors & asset classes</title>
 <link rel="stylesheet" href="app.css?v=f2babcc3b6">
-<script src="site.js?v=76346b89c8"></script>
+<script src="site.js?v=c70b7eecfa"></script>
 <style>#btn-update{display:none}</style>
 </head>
 <body>
@@ -48,9 +48,14 @@
         <select id="topdir"><option value="lowest">lowest</option><option value="highest">highest</option></select>
         <select id="topcol"></select></label>
       <label class="opt" title="Sessions before and after each event drawn on the daily path chart (day 0 = event close = 0%)">Path
-        &minus;<input type="number" id="ppre" value="10" min="0" max="252" step="1" style="width:4.5em">
-        +<input type="number" id="ppost" value="21" min="0" max="252" step="1" style="width:4.5em">
-        <span class="muted">sessions</span></label>
+        <span class="muted">before</span>
+        <select id="ppre"><option value="0">none</option><option value="5">1W</option>
+          <option value="10" selected>2W</option><option value="21">1M</option><option value="63">3M</option>
+          <option value="126">6M</option><option value="252">12M</option></select>
+        <span class="muted">after</span>
+        <select id="ppost"><option value="5">1W</option><option value="10">2W</option>
+          <option value="21" selected>1M</option><option value="63">3M</option><option value="126">6M</option>
+          <option value="252">12M</option><option value="378">18M</option></select></label>
       <label class="opt">From <input type="date" id="start"></label>
       <label class="opt">To <input type="date" id="end"></label>
       <span class="spacer"></span>
@@ -396,7 +401,7 @@ function render(j) {
         <span><span class="sw" style="background:var(--accent)"></span>average of all events</span>
         <span><span class="sw" style="background:var(--pos)"></span>ended the window up</span>
         <span><span class="sw" style="background:var(--neg)"></span>ended down</span>
-        <span>day 0 = event-date close = 0%; x axis in trading sessions. Hover a line for its values.</span>
+        <span>day 0 = event-date close = 0%; one point per trading day; x axis in trading days from the event (21 = 1M, 126 = 6M, 252 = 12M, 378 = 18M). Hover a line for its values.</span>
       </div>
     </div>` : j.n_events ? `<div class="card hint">The daily path chart is drawn for up to 100 events
       (this study has ${j.n_events}) &mdash; narrow it with Top X or Min gap.</div>` : ''}
@@ -488,8 +493,12 @@ function drawPaths(P) {
   const step = ([1, 2, 2.5, 5, 10].find(f => f * mag >= raw) || 10) * mag;
   const yt = [];
   for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) yt.push(Math.abs(v) < step / 1e6 ? 0 : v);
-  const xstep = Math.max(1, Math.ceil((k1 - k0) / 12 / 5) * 5);
+  /* short windows tick every few sessions; long ones by month (21 sessions), as the table's horizons */
+  const span = k1 - k0, mstep = [1, 2, 3, 6].find(n => span / (21 * n) <= 12) || 12;
+  const xstep = span <= 60 ? Math.max(1, Math.ceil(span / 12 / 5) * 5) : 21 * mstep;
   const xt = off.filter(k => k % xstep === 0);
+  if (span > 60 && k0 < 0 && k0 % 21 === 0 && !xt.some(k => k < 0)) xt.unshift(k0);   // e.g. −1M before a 2M step
+  const xlbl = k => k === 0 ? 'day 0' : (k > 0 ? '+' : '\u2212') + Math.abs(k);
 
   /* end labels, nudged apart so they don't overprint */
   const ends = P.events.map((e, i) => {
@@ -511,7 +520,7 @@ function drawPaths(P) {
       <text x="${m.l - 7}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="10"
         fill="var(--text-muted)">${(v * 100).toFixed(dp)}%</text>`).join('') +
     xt.map(k => `<text x="${X(k).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10"
-        fill="var(--text-muted)">${k > 0 ? '+' + k : k}</text>`).join('') +
+        fill="var(--text-muted)">${xlbl(k)}</text>`).join('') +
     `<line x1="${X(0).toFixed(1)}" x2="${X(0).toFixed(1)}" y1="${m.t}" y2="${m.t + ih}"
        stroke="var(--border-strong)" stroke-width="1.5"/>` +
     P.events.map((e, i) => {

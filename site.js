@@ -502,7 +502,7 @@ function study(payload) {
   for (let i = 0; i < s.v.length; i += step) idx.push(i);
   if (s.v.length && idx[idx.length - 1] !== s.v.length - 1) idx.push(s.v.length - 1);
   const meta = DATA.series.find(x => x.id === kw.measure) || {};
-  const win = (k, d) => Math.min(Math.max(parseInt(payload[k] == null || payload[k] === '' ? d : payload[k]), 0), 252);
+  const win = (k, d) => Math.min(Math.max(parseInt(payload[k] == null || payload[k] === '' ? d : payload[k]), 0), 378);
   const paths = table.length ? eventPaths(table, s, win('path_pre', 10), win('path_post', 21)) : null;
   return {
     kw, table, days,
