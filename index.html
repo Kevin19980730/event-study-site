@@ -65,6 +65,8 @@
       <button data-preset="midoct">Midterm-year October</button>
       <button data-preset="midpre">Midterm: day before election</button>
       <button data-preset="midpost">Midterm: day after election</button>
+      <button data-preset="prespre">Presidential: day before election</button>
+      <button data-preset="prespost">Presidential: day after election</button>
       <button data-preset="oil">Oil −25% from 52W high</button>
       <button data-preset="spxworst">S&amp;P 500 10 worst days</button>
     </div>
@@ -201,6 +203,8 @@ const PRESETS = {
   midoct:  [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'month', '==', 10]],
   midpre:  [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'election_day', '==', -1]],
   midpost: [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'election_day', '==', 1]],
+  prespre:  [['ac:s_p500', 'cycle_year', '==', 0], ['ac:s_p500', 'election_day', '==', -1]],
+  prespost: [['ac:s_p500', 'cycle_year', '==', 0], ['ac:s_p500', 'election_day', '==', 1]],
   oil:        [['ac:oil', 'dd_52w_high', '<=', -25]],
   spxworst:   {conds: [['ac:s_p500', 'ret_1d', '<=', -3]], mode: 'every_day', gap: 0,
                top: [10, 'lowest', 'Last 1D']},

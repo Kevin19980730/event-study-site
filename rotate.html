@@ -66,6 +66,8 @@ tr.secrow td.name{background:var(--surface-2);text-transform:uppercase;
       <button data-preset="midoct">Midterm-year October</button>
       <button data-preset="midpre">Midterm: day before election</button>
       <button data-preset="midpost">Midterm: day after election</button>
+      <button data-preset="prespre">Presidential: day before election</button>
+      <button data-preset="prespost">Presidential: day after election</button>
       <button data-preset="oil">Oil −25% from 52W high</button>
     </div>
     <div class="hint">Forward returns for every series in the universe, measured from
@@ -190,6 +192,8 @@ const PRESETS = {
   midoct:  [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'month', '==', 10]],
   midpre:  [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'election_day', '==', -1]],
   midpost: [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'election_day', '==', 1]],
+  prespre:  [['ac:s_p500', 'cycle_year', '==', 0], ['ac:s_p500', 'election_day', '==', -1]],
+  prespost: [['ac:s_p500', 'cycle_year', '==', 0], ['ac:s_p500', 'election_day', '==', 1]],
   oil:     [['ac:oil', 'dd_52w_high', '<=', -25]],
 };
 document.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
