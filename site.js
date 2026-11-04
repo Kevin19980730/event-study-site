@@ -219,6 +219,23 @@ function electionOffset(d) {
   }
   return out;
 }
+/* chambers that changed party control at each midterm; bit set as engine.midterm_flip_code
+   (1 to R, 2 to D, 4 both chambers, 8 no flip, 16 House, 32 Senate, 64 any flip) */
+const MIDTERM_CONTROL = {
+  1930: {house: 'D'}, 1934: {}, 1938: {}, 1942: {}, 1946: {house: 'R', senate: 'R'}, 1950: {},
+  1954: {house: 'D', senate: 'D'}, 1958: {}, 1962: {}, 1966: {}, 1970: {}, 1974: {}, 1978: {},
+  1982: {}, 1986: {senate: 'D'}, 1990: {}, 1994: {house: 'R', senate: 'R'}, 1998: {},
+  2002: {senate: 'R'}, 2006: {house: 'D', senate: 'D'}, 2010: {house: 'R'}, 2014: {senate: 'R'},
+  2018: {house: 'D'}, 2022: {house: 'R'}, 2026: {house: 'D', senate: 'D'},
+};
+function midtermFlipCode(y) {
+  const ch = MIDTERM_CONTROL[y];
+  if (ch === undefined) return NaN;
+  const ks = Object.keys(ch), vs = Object.values(ch);
+  if (!ks.length) return 8;
+  return 64 | (ch.house ? 16 : 0) | (ch.senate ? 32 : 0) | (ks.length === 2 ? 4 : 0)
+       | (vs.includes('R') ? 1 : 0) | (vs.includes('D') ? 2 : 0);
+}
 const mcache = new Map();
 function metricSeries(sid, metric) {
   const key = sid + '|' + metric;
@@ -229,6 +246,7 @@ function metricSeries(sid, metric) {
   else if (metric === 'cycle_year') out = Float64Array.from(s.d, d => yearOf(d) % 4);
   else if (metric === 'month') out = Float64Array.from(s.d, d => new Date(d * DAY).getUTCMonth() + 1);
   else if (metric === 'election_day') out = electionOffset(s.d);
+  else if (metric === 'midterm_flip') out = Float64Array.from(s.d, d => midtermFlipCode(yearOf(d)));
   else if (metric === 'midterm_day' || metric === 'pres_day') {
     const cy = metric === 'midterm_day' ? 2 : 0;
     out = electionOffset(s.d).map((o, i) => yearOf(s.d[i]) % 4 === cy ? o : NaN);
@@ -261,9 +279,10 @@ function metricSeries(sid, metric) {
   mcache.set(key, out);
   return out;
 }
-const PCT = id => !['price', 'up_streak', 'down_streak', 'cycle_year', 'month', 'election_day', 'midterm_day', 'pres_day'].includes(id);
+const PCT = id => !['price', 'up_streak', 'down_streak', 'cycle_year', 'month', 'election_day', 'midterm_day', 'pres_day', 'midterm_flip'].includes(id);
 function applyOp(x, op, val) {
   if (op === '==') return x === val;
+  if (op === 'has') return ((Number.isNaN(x) ? 0 : x) & val) === val;
   if (op === '<=') return x <= val;
   if (op === '>=') return x >= val;
   if (op === '<') return x < val;

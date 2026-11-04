@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Event Study — GICS industries, sectors & asset classes</title>
 <link rel="stylesheet" href="app.css?v=a407fae707">
-<script src="site.js?v=c70b7eecfa"></script>
+<script src="site.js?v=b88f70c6e1"></script>
 <style>#btn-update{display:none}</style>
 </head>
 <body>
@@ -65,6 +65,9 @@
       <button data-preset="midoct">Midterm-year October</button>
       <button data-preset="midpre">Midterm: day before election</button>
       <button data-preset="midpost">Midterm: day after election</button>
+      <button data-preset="midflipR">Midterm: day after, Congress flipped D → R</button>
+      <button data-preset="midflipD">Midterm: day after, Congress flipped R → D</button>
+      <button data-preset="midnoflip">Midterm: day after, no flip</button>
       <button data-preset="prespre">Presidential: day before election</button>
       <button data-preset="prespost">Presidential: day after election</button>
       <button data-preset="oil">Oil −25% from 52W high</button>
@@ -138,6 +141,11 @@ const CAL = {
   election_day: ELECTION_PICK,
   midterm_day: ELECTION_PICK,
   pres_day: ELECTION_PICK,
+  /* bit set (engine.midterm_flip_code), tested with "has": every bit of the pick present */
+  midterm_flip: [[64, 'Any chamber flipped'], [1, 'Flipped D → R (any chamber)'],
+                 [2, 'Flipped R → D (any chamber)'], [4, 'Both chambers flipped'],
+                 [5, 'Both flipped D → R'], [6, 'Both flipped R → D'],
+                 [16, 'House flipped'], [32, 'Senate flipped'], [8, 'No flip (both held)']],
   month: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((m, i) => [i + 1, m]),
 };
 function addCond(series, metric, op, value, move) {
@@ -184,7 +192,7 @@ function readConds() {
       op: d.querySelector('.op').value,
       value: parseFloat(d.querySelector('.val').value),
     };
-    if (CAL[c.metric]) { c.op = '=='; c.value = parseFloat(d.querySelector('.pick').value); }
+    if (CAL[c.metric]) { c.op = c.metric === 'midterm_flip' ? 'has' : '=='; c.value = parseFloat(d.querySelector('.pick').value); }
     const move = parseFloat(d.querySelector('.move').value);
     if (!STREAK.includes(c.metric) || !(move > 0)) return [c];
     const up = c.metric === 'up_streak';
@@ -206,6 +214,9 @@ const PRESETS = {
   midoct:  [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'month', '==', 10]],
   midpre:  [['ac:s_p500', 'midterm_day', '==', -1]],
   midpost: [['ac:s_p500', 'midterm_day', '==', 1]],
+  midflipR: [['ac:s_p500', 'midterm_day', '==', 1], ['ac:s_p500', 'midterm_flip', 'has', 1]],
+  midflipD: [['ac:s_p500', 'midterm_day', '==', 1], ['ac:s_p500', 'midterm_flip', 'has', 2]],
+  midnoflip: [['ac:s_p500', 'midterm_day', '==', 1], ['ac:s_p500', 'midterm_flip', 'has', 8]],
   prespre:  [['ac:s_p500', 'pres_day', '==', -1]],
   prespost: [['ac:s_p500', 'pres_day', '==', 1]],
   oil:        [['ac:oil', 'dd_52w_high', '<=', -25]],
