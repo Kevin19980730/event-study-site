@@ -91,7 +91,7 @@ async function unlock() {
   catch (e) { rejectReady(e); return; }
 
   if (blob.open) {                       // no password on this build
-    try { DATA = await inflate(blob.gz); prepare(); resolveReady(); }
+    try { DATA = await inflate(blob.gz); await addFF(); prepare(); resolveReady(); }
     catch (e) { rejectReady(e); }
     return;
   }
@@ -99,7 +99,7 @@ async function unlock() {
   for (const store of [sessionStorage, localStorage]) {          // remembered key
     const k = store.getItem(KEY_STORE);
     if (!k) continue;
-    try { DATA = await openWith(unb64(k), blob); prepare(); resolveReady(); return; }
+    try { DATA = await openWith(unb64(k), blob); await addFF(); prepare(); resolveReady(); return; }
     catch (e) { store.removeItem(KEY_STORE); }
   }
 
@@ -114,6 +114,7 @@ async function unlock() {
       DATA = await openWith(raw, blob);
       sessionStorage.setItem(KEY_STORE, b64(raw));
       if (ui.querySelector('#gate-remember').checked) localStorage.setItem(KEY_STORE, b64(raw));
+      await addFF();
       prepare();
       ui.remove();
       resolveReady();
@@ -124,12 +125,35 @@ async function unlock() {
   };
 }
 
+/* Ken French industries ship separately in ff.bin (public data, never encrypted) as
+   integer basis-point daily returns; prepare() compounds them into levels.
+   The fetch starts at load so it runs alongside data.bin. */
+const FF_FETCH = fetch('ff.bin').then(r => r.ok ? r.arrayBuffer() : null).catch(() => null);
+async function addFF() {
+  const ab = await FF_FETCH;
+  if (!ab) return;                        // older build without ff.bin
+  const buf = new Uint8Array(ab);
+  if (String.fromCharCode(...buf.slice(0, 4)) !== 'ESD0') return;
+  Object.assign(DATA.prices, await inflate(buf.slice(4)));
+}
+
 /* ------------------------------------------------------------ data model */
 const PX = {};           // sid -> {d: Int32Array (days since epoch), v: Float64Array, p0}
 function prepare() {
   for (const [sid, s] of Object.entries(DATA.prices)) {
-    const n = s.dd.length, d = new Int32Array(n), v = new Float64Array(n), sc = Math.pow(10, s.dec);
-    let day = s.d0, iv = 0;
+    const n = s.dd.length, d = new Int32Array(n), v = new Float64Array(n);
+    let day = s.d0;
+    if (s.bp) {                           // Ken French: compound bp returns, as famafrench.levels
+      let cum = 1;
+      for (let i = 0; i < n; i++) {
+        day += s.dd[i]; cum *= 1 + s.bp[i] / 1e4;
+        d[i] = day; v[i] = 100 * cum;
+      }
+      PX[sid] = {d, v, p0: -1};
+      continue;
+    }
+    const sc = Math.pow(10, s.dec);
+    let iv = 0;
     for (let i = 0; i < n; i++) {
       day += s.dd[i]; iv += s.vd[i];
       d[i] = day; v[i] = iv / sc;

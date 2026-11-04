@@ -21,7 +21,7 @@ tr.secrow td.name{background:var(--surface-2);text-transform:uppercase;
   font-size:11px;letter-spacing:.04em}
 .sub{font-size:11px;color:var(--text-muted);display:block;font-weight:400}
 </style>
-<script src="site.js?v=b88f70c6e1"></script>
+<script src="site.js?v=cc0f613d80"></script>
 <style>#btn-update{display:none}</style>
 </head>
 <body>
@@ -107,9 +107,11 @@ function heat(v, scale) {
 /* ---------- condition rows (same contract as the study page) ---------- */
 function seriesOptions(sel) {
   const groups = {industry: 'GICS industries', sector: 'GICS sectors',
-                  asset_class: 'Asset classes', benchmark: 'Benchmark'};
+                  asset_class: 'Asset classes', benchmark: 'Benchmark',
+                  ff_industry: 'Ken French 49 industries, value-weighted (total return, 1926+)',
+                  ff_industry_ew: 'Ken French 49 industries, equal-weighted (total return, 1926+)'};
   let html = '';
-  for (const g of ['industry', 'sector', 'asset_class', 'benchmark']) {
+  for (const g of ['industry', 'sector', 'asset_class', 'benchmark', 'ff_industry', 'ff_industry_ew']) {
     const rows = SERIES.filter(s => s.grp === g);
     if (!rows.length) continue;
     html += `<optgroup label="${groups[g]}">`;
@@ -246,7 +248,7 @@ $('#csv').onclick = async () => {
 
 /* ---------- render ---------- */
 const GROUPS = [['industry', 'Industries'], ['sector', 'Sectors'],
-                ['asset_class', 'Asset classes']];
+                ['asset_class', 'Asset classes'], ['ff_industry', 'FF 49 VW'], ['ff_industry_ew', 'FF 49 EW']];
 const STATS = [['avg', 'Average return'], ['median', 'Median return'], ['win', 'Win rate']];
 
 function render() {
