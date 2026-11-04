@@ -12,7 +12,12 @@ const SERIES_GROUPS = [
   ['ff_industry', 'Ken French 49 industries, value-weighted (1926+)'],
   ['ff_industry_ew', 'Ken French 49 industries, equal-weighted (1926+)'],
   ['breadth', 'Breadth (% of members)'],
+  ['calendar', 'Calendar & elections'],
 ];
+/* Calendar criteria stand alone -- no series to pick. They are evaluated on the
+   S&P 500's trading days (1928+), the longest equity calendar in the data. */
+const CAL_SERIES = 'ac:s_p500';
+const CAL_METRICS = ['cycle_year', 'month', 'election_day', 'midterm_day', 'pres_day', 'midterm_flip'];
 /* breadth.UNIVERSES -- the breadth monitor's 15 series */
 const BREADTH_UNIVERSES = [
   ['SPX', 'S&P 500'], ['NDX', 'Nasdaq 100'], ['RTY', 'Russell 2000'], ['SPR', 'S&P 1500'],
@@ -26,32 +31,37 @@ const METRIC_GROUPS = [
   ['Drawdown & level', ['dd_52w_high', 'up_52w_low', 'dd_alltime', 'vs_ma50', 'vs_ma200', 'price']],
   ['Returns', ['ret_1d', 'ret_1w', 'ret_2w', 'ret_1m', 'ret_3m', 'ret_6m', 'ret_12m', 'ret_18m', 'ret_ytd']],
   ['Streaks', ['up_streak', 'down_streak', 'streak_ret']],
-  ['Calendar & elections', ['cycle_year', 'month', 'election_day', 'midterm_day', 'pres_day', 'midterm_flip']],
 ];
 const isBreadthMetric = m => m.startsWith('br_');
-const groupOf = sid => sid?.startsWith('br:') ? 'breadth'
+const groupOf = (sid, metric) => CAL_METRICS.includes(metric) ? 'calendar'
+  : sid?.startsWith('br:') ? 'breadth'
   : (SERIES.find(s => s.id === sid) || {}).grp || 'asset_class';
+/* which criteria list a group gets */
+const kindOf = grp => grp === 'breadth' || grp === 'calendar' ? grp : 'price';
+const KIND_DEFAULT = {price: ['dd_52w_high', '<=', -10], breadth: ['br_ma200', '<=', 20],
+                      calendar: ['midterm_day', '==', 1]};
 
-function groupOptions(sel, withBreadth = true) {
-  return SERIES_GROUPS.filter(([g]) => (withBreadth || g !== 'breadth') &&
-      (g === 'breadth' || SERIES.some(s => s.grp === g)))
+function groupOptions(sel, withSpecial = true) {
+  return SERIES_GROUPS.filter(([g]) => kindOf(g) === 'price' ? SERIES.some(s => s.grp === g) : withSpecial)
     .map(([g, l]) => `<option value="${g}"${g === sel ? ' selected' : ''}>${l}</option>`).join('');
 }
 function seriesOptionsFor(grp, sel) {
   const rows = grp === 'breadth' ? BREADTH_UNIVERSES.map(([c, l]) => ({id: 'br:' + c, name: l}))
+    : grp === 'calendar' ? [{id: CAL_SERIES, name: 'S&P 500 trading days'}]
     : SERIES.filter(s => s.grp === grp);
   return rows.map(s => `<option value="${s.id}"${s.id === sel ? ' selected' : ''}>${s.name}</option>`).join('');
 }
 /* full list in optgroups, for pages with a single series picker */
 function seriesOptions(sel) {
-  return SERIES_GROUPS.filter(([g]) => g !== 'breadth' && SERIES.some(s => s.grp === g))
+  return SERIES_GROUPS.filter(([g]) => kindOf(g) === 'price' && SERIES.some(s => s.grp === g))
     .map(([g, l]) => `<optgroup label="${l}">${seriesOptionsFor(g, sel)}</optgroup>`).join('');
 }
-function metricOptions(breadth, sel) {
+function metricOptions(kind, sel) {
   const label = id => (METRICS.find(m => m.id === id) || {}).label || id;
   const opt = id => `<option value="${id}"${id === sel ? ' selected' : ''}>${label(id)}</option>`;
-  if (breadth) return METRICS.filter(m => isBreadthMetric(m.id)).map(m => opt(m.id)).join('');
-  const known = new Set(METRIC_GROUPS.flatMap(([, ids]) => ids));
+  if (kind === 'breadth') return METRICS.filter(m => isBreadthMetric(m.id)).map(m => opt(m.id)).join('');
+  if (kind === 'calendar') return CAL_METRICS.filter(id => METRICS.some(m => m.id === id)).map(opt).join('');
+  const known = new Set([...METRIC_GROUPS.flatMap(([, ids]) => ids), ...CAL_METRICS]);
   const extra = METRICS.filter(m => !isBreadthMetric(m.id) && !known.has(m.id)).map(m => m.id);
   return [...METRIC_GROUPS, ...(extra.length ? [['Other', extra]] : [])]
     .map(([l, ids]) => `<optgroup label="${l}">${ids.filter(id => METRICS.some(m => m.id === id))
@@ -83,11 +93,11 @@ const CAL = {
 function addCond(series, metric, op, value, move) {
   const div = document.createElement('div');
   div.className = 'cond';
-  const g0 = groupOf(series);
+  const g0 = groupOf(series, metric);
   div.innerHTML =
     `<select class="grp" title="Series group">${groupOptions(g0)}</select>
-     <select class="series">${seriesOptionsFor(g0, series)}</select>
-     <select class="metric">${metricOptions(g0 === 'breadth', metric)}</select>
+     <select class="series"${g0 === 'calendar' ? ' hidden' : ''}>${seriesOptionsFor(g0, series)}</select>
+     <select class="metric">${metricOptions(kindOf(g0), metric)}</select>
      <select class="op">${['<=', '>=', '<', '>'].map(o =>
        `<option${o === op ? ' selected' : ''}>${o}</option>`).join('')}</select>
      <input type="number" class="val" value="${value}" step="0.5">
@@ -115,13 +125,16 @@ function addCond(series, metric, op, value, move) {
     mv.hidden = !STREAK.includes(met.value);
     mv.querySelector('.dir').textContent = met.value === 'up_streak' ? '& up' : '& down';
   };
+  let kind = kindOf(g0);
   grp.addEventListener('change', () => {
-    const wasBreadth = isBreadthMetric(met.value), nowBreadth = grp.value === 'breadth';
+    const next = kindOf(grp.value);
     ser.innerHTML = seriesOptionsFor(grp.value);
-    if (wasBreadth !== nowBreadth) {
-      met.innerHTML = metricOptions(nowBreadth, nowBreadth ? 'br_ma200' : 'dd_52w_high');
-      div.querySelector('.val').value = nowBreadth ? 20 : -10;
-      div.querySelector('.op').value = '<=';
+    ser.hidden = next === 'calendar';
+    if (next !== kind) {
+      const [m, o, v] = KIND_DEFAULT[next];
+      met.innerHTML = metricOptions(next, m);
+      if (next !== 'calendar') { div.querySelector('.val').value = v; div.querySelector('.op').value = o; }
+      kind = next;
     }
     sync();
   });
