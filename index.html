@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Event Study — GICS industries, sectors & asset classes</title>
-<link rel="stylesheet" href="app.css?v=b88969dfaf">
+<link rel="stylesheet" href="app.css?v=7c4f10a138">
 <script src="cards.js?v=67b98b55ee"></script>
 <script src="conds.js?v=41b6a91d25"></script>
-<script src="site.js?v=c95f5b4af6"></script>
+<script src="site.js?v=6e022e7ad6"></script>
 <style>#btn-update{display:none}</style>
 </head>
 <body>
@@ -179,7 +179,8 @@ function payload() {
           start: $('#start').value, end: $('#end').value,
           top_n: parseInt($('#topn').value || 0), top_dir: $('#topdir').value,
           top_col: $('#topcol').value,
-          path_pre: PATH.pre, path_post: PATH.post, br_u: BR.u, br_m: BR.m};
+          path_pre: PATH.pre, path_post: PATH.post, br_u: BR.u, br_m: BR.m,
+          bp_pre: BP.pre, bp_post: BP.post};
 }
 async function run() {
   $('#run').disabled = true;
@@ -334,6 +335,7 @@ function render(j) {
     </div>` : j.n_events ? `<div class="card hint">The daily path chart is drawn for up to 100 events
       (this study has ${j.n_events}) &mdash; narrow it with Top X or Min gap.</div>` : ''}
 
+    ${j.breadth_paths ? bpathsCard(j.breadth_paths, j.events.map(e => e.date)) : ''}
     ${j.breadth_snap ? snapCard(j.breadth_snap, j.events.map(e => e.date), j.breadth?.first) : ''}
     ${j.breadth ? breadthCard(j.breadth, j.events.map(e => e.date)) : ''}
 
@@ -395,6 +397,8 @@ function render(j) {
 
   drawChart(j);
   document.querySelectorAll('.br-pick').forEach(s => s.onchange = () => { BR[s.dataset.k] = s.value; run(); });
+  document.querySelectorAll('.bp-pick').forEach(s => s.onchange = () => { BP[s.dataset.k] = +s.value; run(); });
+  drawBreadthPaths(j.breadth_paths);
   if (j.paths) {
     document.querySelectorAll('.path-pick').forEach(s => s.onchange = () => { PATH[s.dataset.k] = +s.value; run(); });
     drawPaths(j.paths);
@@ -489,6 +493,78 @@ function snapCard(B, evDates = [], first = null) {
       <span><span class="tag">now</span> latest reading &mdash; reference only, excluded from the statistics</span>
     </div>
   </div>`;
+}
+
+/* ---------- breadth chart per event: % above 200/50/20D MA around each event ---------- */
+const BP = {pre: 63, post: 126};
+const BP_OPTS = {pre: [[21, '1M'], [63, '3M'], [126, '6M'], [252, '12M']],
+                 post: [[21, '1M'], [63, '3M'], [126, '6M'], [252, '12M'], [378, '18M']]};
+const BP_LINES = [['br_ma200', '> 200D MA', 'var(--br200)', ''], ['br_ma50', '> 50D MA', 'var(--br50)', ''],
+                  ['br_ma20', '> 20D MA', 'var(--br20)', '4 3']];
+const bpPick = k => `<select class="bp-pick" data-k="${k}">${BP_OPTS[k].map(([v, l]) =>
+  `<option value="${v}"${v === BP[k] ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
+function bpathsCard(P, evDates) {
+  const uname = BREADTH_UNIVERSES.find(([c]) => c === (P.universe || BR.u))?.[1] || P.universe || BR.u;
+  const uOpts = BREADTH_UNIVERSES.map(([c, l]) => `<option value="${c}"${c === BR.u ? ' selected' : ''}>${l}</option>`).join('');
+  const head = `<div class="path-head"><h2>Breadth chart per event</h2>
+      <label class="opt"><select class="br-pick" data-k="u">${uOpts}</select>
+        <span class="muted">before</span> ${bpPick('pre')} <span class="muted">after</span> ${bpPick('post')}</label></div>`;
+  if (P.too_many) return `<div class="card">${head}<div class="hint">One chart per event is drawn for up to
+    ${P.max} events (this study has ${P.too_many}) &mdash; narrow it with Top X or Min gap.</div></div>`;
+  const have = new Set(P.events.map(e => e.date));
+  const missing = evDates.filter(d => !have.has(d));
+  const f = v => v == null ? '–' : v.toFixed(1);
+  const ev0 = P.offsets.indexOf(0);
+  return `<div class="card">${head}
+    <div class="legend bp-legend">${BP_LINES.map(([, l, c, dash]) =>
+      `<span><svg width="22" height="8"><line x1="0" x2="22" y1="4" y2="4" stroke="${c}" stroke-width="2"
+        ${dash ? `stroke-dasharray="${dash}"` : ''}/></svg>${l}</span>`).join('')}
+      <span>% of ${uname} members; vertical line = event day; x axis in trading days from the event</span></div>
+    <div class="bp-grid">${P.events.map((e, i) => `<div class="bp-cell">
+        <div class="bp-title"><b>${e.date}</b><span class="muted">event day: ${BP_LINES.map(([m, l]) =>
+          `${l.replace(' MA', '')} ${f(e[m][ev0])}`).join(' · ')}</span></div>
+        <svg class="bp-svg" data-i="${i}"></svg></div>`).join('')}</div>
+    ${missing.length ? `<div class="hint">No ${uname} breadth for ${missing.join(', ')}${P.first ? ` (history starts ${P.first})` : ''}.</div>` : ''}
+  </div>`;
+}
+function drawBreadthPaths(P) {
+  if (!P || P.too_many) return;
+  const off = P.offsets, k0 = off[0], k1 = off[off.length - 1] === k0 ? k0 + 1 : off[off.length - 1];
+  document.querySelectorAll('svg.bp-svg').forEach(svg => {
+    const e = P.events[+svg.dataset.i];
+    const W = svg.clientWidth || 400, H = 170, m = {t: 8, r: 8, b: 20, l: 34};
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const X = k => m.l + (k - k0) / (k1 - k0) * iw, Y = v => m.t + ih - v / 100 * ih;
+    const line = arr => { let d = '', pen = false;
+      arr.forEach((v, j) => { if (v === null) { pen = false; return; }
+        d += (pen ? 'L' : 'M') + X(off[j]).toFixed(1) + ' ' + Y(v).toFixed(1); pen = true; }); return d; };
+    const span = k1 - k0, xstep = span <= 63 ? 21 : span <= 252 ? 63 : 126;
+    const xt = off.filter(k => k % xstep === 0);
+    const xl = k => k === 0 ? '0' : (k > 0 ? '+' : '−') + (k % 21 === 0 ? Math.abs(k / 21) + 'M' : Math.abs(k));
+    svg.style.height = H + 'px';
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML =
+      [0, 25, 50, 75, 100].map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--border)"/>
+        <text x="${m.l - 5}" y="${Y(v) + 3.5}" text-anchor="end" font-size="9.5" fill="var(--text-muted)">${v}%</text>`).join('') +
+      xt.map(k => `<text x="${X(k).toFixed(1)}" y="${H - 5}" text-anchor="middle" font-size="9.5" fill="var(--text-muted)">${xl(k)}</text>`).join('') +
+      `<line x1="${X(0)}" x2="${X(0)}" y1="${m.t}" y2="${m.t + ih}" stroke="var(--accent)" stroke-width="1.2" stroke-opacity=".8"/>` +
+      BP_LINES.map(([mm, , c, dash]) => `<path d="${line(e[mm])}" fill="none" stroke="${c}" stroke-width="1.6"
+        stroke-linejoin="round"${dash ? ` stroke-dasharray="${dash}"` : ''}/>`).join('') +
+      `<line class="bp-cross" y1="${m.t}" y2="${m.t + ih}" stroke="var(--border-strong)" style="display:none"/>`;
+    const tip = $('#tip'), cross = svg.querySelector('.bp-cross');
+    svg.onmousemove = ev => {
+      const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width);
+      if (px < m.l || px > W - m.r) { tip.style.display = 'none'; cross.style.display = 'none'; return; }
+      const j = Math.max(0, Math.min(off.length - 1, Math.round((px - m.l) / iw * (k1 - k0))));
+      cross.style.display = ''; cross.setAttribute('x1', X(off[j])); cross.setAttribute('x2', X(off[j]));
+      tip.style.display = 'block';
+      tip.innerHTML = `<b>${e.dates[j] || '—'}</b> <span class="muted">(day ${off[j] > 0 ? '+' : ''}${off[j]})</span><br>` +
+        BP_LINES.map(([mm, l]) => `${l}: ${e[mm][j] == null ? '—' : e[mm][j].toFixed(1) + '%'}`).join('<br>');
+      tip.style.left = Math.min(ev.clientX + 14, innerWidth - 190) + 'px';
+      tip.style.top = (ev.clientY - 10) + 'px';
+    };
+    svg.onmouseleave = () => { tip.style.display = 'none'; cross.style.display = 'none'; };
+  });
 }
 
 /* path chart window, in trading days on the table's horizon convention; the pickers
@@ -670,7 +746,8 @@ let rzTimer;
 addEventListener('resize', () => {
   clearTimeout(rzTimer);
   rzTimer = setTimeout(() => { if (LAST && document.querySelector('#chart')) drawChart(LAST);
-    if (LAST?.paths && document.querySelector('#paths')) drawPaths(LAST.paths); }, 150);
+    if (LAST?.paths && document.querySelector('#paths')) drawPaths(LAST.paths);
+    if (LAST?.breadth_paths) drawBreadthPaths(LAST.breadth_paths); }, 150);
 });
 
 /* ---------- status / update ---------- */

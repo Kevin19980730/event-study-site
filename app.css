@@ -17,6 +17,8 @@
      prints its signed value anyway. */
   --neg:#f2555a; --pos:#12a594; --mid:#1c1c1a;
   --warn:#ffae00; --warn-ink:#ffae00;
+  /* breadth-per-event lines: % above 200 / 50 / 20D MA (blue, green, dashed amber) */
+  --br200:#5b9cf5; --br50:#3fbf7f; --br20:#d9a441;
 }
 :root[data-theme="light"]{
   color-scheme: light;
@@ -26,6 +28,7 @@
   --accent:#b06f00; --accent-solid:#8a5a00; --accent-ink:#ffffff;
   --neg:#d03b3b; --pos:#0d9488; --mid:#f0efec;
   --warn:#fab219; --warn-ink:#8a5a00;
+  --br200:#1f5fbf; --br50:#158a52; --br20:#a86a12;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--surface-0);color:var(--text-primary);
@@ -143,3 +146,10 @@ th.sortcol,td.sortcol{box-shadow:inset 0 0 0 1px var(--border-strong)}
 .card-tg{position:absolute;top:8px;right:9px;padding:1px 7px;font-size:12px;line-height:1.3;
   color:var(--text-secondary);background:transparent;border:1px solid var(--border);border-radius:3px;cursor:pointer}
 .card-tg:hover{color:var(--accent);border-color:var(--accent)}
+
+/* breadth chart per event */
+.bp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px;margin-top:6px}
+.bp-cell{border:1px solid var(--border);border-radius:4px;padding:6px 8px 2px;background:var(--surface-1)}
+.bp-title{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;flex-wrap:wrap}
+.bp-svg{width:100%;display:block}
+.bp-legend svg{vertical-align:middle;margin-right:5px}

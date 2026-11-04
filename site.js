@@ -383,6 +383,35 @@ function applyOp(x, op, val) {
   throw new Error('unknown operator ' + op);
 }
 
+/* engine.breadth_paths: % above 200/50/20D MA through a window around each event */
+const BREADTH_PATH_METRICS = ['br_ma200', 'br_ma50', 'br_ma20'], BREADTH_PATH_MAX_EVENTS = 40;
+function breadthPaths(days, u, measure, pre, post) {
+  if (days.length > BREADTH_PATH_MAX_EVENTS) return {too_many: days.length, max: BREADTH_PATH_MAX_EVENTS};
+  const S = Object.fromEntries(BREADTH_PATH_METRICS.map(m => [m, breadthSeries(u, m)]));
+  if (BREADTH_PATH_METRICS.every(m => !S[m].v.length)) return null;
+  const ms = measure ? series(measure) : null;
+  const cal = ms && ms.d.length ? ms.d : S.br_ma200.d;
+  const asof = (s, day) => {
+    if (!s.v.length) return null;
+    const k = upperBound(s.d, day) - 1;
+    return k < 0 || day - s.d[k] > BREADTH_ASOF_DAYS ? null : s.v[k];
+  };
+  const offsets = [];
+  for (let k = -pre; k <= post; k++) offsets.push(k);
+  const events = [];
+  for (const d of days) {
+    const pos = lowerBound(cal, d);
+    if (pos >= cal.length || cal[pos] - d > 7) continue;
+    const dd = offsets.map(k => pos + k >= 0 && pos + k < cal.length ? cal[pos + k] : null);
+    const rec = {date: iso(d), dates: dd.map(x => x === null ? null : iso(x))};
+    for (const m of BREADTH_PATH_METRICS) rec[m] = dd.map(x => x === null ? null : asof(S[m], x));
+    if (BREADTH_PATH_METRICS.every(m => rec[m].every(v => v === null))) continue;
+    events.push(rec);
+  }
+  return {universe: u, offsets, metrics: BREADTH_PATH_METRICS, events,
+          first: S.br_ma200.d.length ? iso(S.br_ma200.d[0]) : null};
+}
+
 /* engine.breadth_snapshot: every internal of one universe on each event date */
 const BREADTH_IDS = ['br_ma200', 'br_ma50', 'br_ma20', 'br_nh', 'br_nl', 'br_rsihi', 'br_rsilo'];
 function breadthSnapshot(days, u, measure) {
@@ -654,6 +683,8 @@ function study(payload) {
   const brM = DATA.metricLabels[payload.br_m] && isBreadth(payload.br_m) ? payload.br_m : 'br_ma200';
   const breadth = table.length ? breadthAround(table.map(r => r.day), payload.br_u || 'SPX', brM, kw.measure) : null;
   const breadth_snap = table.length ? breadthSnapshot(table.map(r => r.day), payload.br_u || 'SPX', kw.measure) : null;
+  const breadth_paths = table.length ? breadthPaths(table.map(r => r.day), payload.br_u || 'SPX', kw.measure,
+    win('bp_pre', 63), win('bp_post', 126)) : null;
   return {
     kw, table, days,
     json: {
@@ -665,7 +696,7 @@ function study(payload) {
       measure: {name: meta.name, ticker: meta.ticker}, measure_id: kw.measure,
       chart: {dates: idx.map(i => iso(s.d[i])), levels: idx.map(i => s.v[i]),
               events: table.map(r => iso(r.day))},
-      paths, breadth, breadth_snap,
+      paths, breadth, breadth_snap, breadth_paths,
     },
   };
 }
