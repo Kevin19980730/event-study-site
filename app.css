@@ -83,7 +83,10 @@ th{background:var(--surface-2);color:var(--text-secondary);font-weight:700;
   position:sticky;top:0;z-index:2}
 thead tr.grp th{font-size:10.5px;text-transform:uppercase;letter-spacing:.12em;
   color:var(--accent);top:0}
-thead tr.hdr th{top:23px;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+thead tr.hdr th{top:0;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+/* only a header that sits under a group row (tr.grp) is offset by that row's height;
+   a lone header at 23px covered the first body row (the breadth cards' first event) */
+thead tr.grp + tr.hdr th{top:23px}
 td.date,th.date{text-align:left;position:sticky;left:0;background:var(--surface-1);
   z-index:1;border-right:1px solid var(--border)}
 th.date{background:var(--surface-2);z-index:3}

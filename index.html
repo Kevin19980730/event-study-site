@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Event Study — GICS industries, sectors & asset classes</title>
-<link rel="stylesheet" href="app.css?v=5be79c204a">
+<link rel="stylesheet" href="app.css?v=6bd3882365">
 <script src="conds.js?v=41b6a91d25"></script>
 <script src="site.js?v=c95f5b4af6"></script>
 <style>#btn-update{display:none}</style>
@@ -473,7 +473,8 @@ function snapCard(B, evDates = [], first = null) {
     <div class="scroll"><table>
       <thead><tr class="hdr"><th class="date">Event</th>${B.labels.map(l => `<th title="${l}">${short(l)}</th>`).join('')}</tr></thead>
       <tbody>${withMissing(B.events, evDates, uname, first, B.labels.length, e => row(e.date, e.values))}
-        ${B.latest ? row(`${B.latest.date} <span class="tag">now</span>`, B.latest.values, 'latest') : ''}</tbody>
+        ${B.latest && !evDates.includes(B.latest.date)   /* the newest bar is itself an event: don't repeat it */
+          ? row(`${B.latest.date} <span class="tag">now</span>`, B.latest.values, 'latest') : ''}</tbody>
       <tfoot>
         ${row('Average', B.stats.avg, 'stat sep')}
         ${row('Median', B.stats.median, 'stat')}
