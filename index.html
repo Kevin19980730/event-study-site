@@ -4,8 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Event Study — GICS industries, sectors & asset classes</title>
-<link rel="stylesheet" href="app.css?v=a407fae707">
-<script src="site.js?v=cc0f613d80"></script>
+<link rel="stylesheet" href="app.css?v=5be79c204a">
+<script src="conds.js?v=2135b733d9"></script>
+<script src="site.js?v=25f1c31cae"></script>
 <style>#btn-update{display:none}</style>
 </head>
 <body>
@@ -31,7 +32,7 @@
 
     <div class="opts">
       <label class="opt">Measure returns on
-        <select id="measure"><option value="">same as condition 1</option></select></label>
+        <select id="measure-grp"></select> <select id="measure"></select></label>
       <label class="opt">Trigger
         <select id="mode">
           <option value="first_entry">first entry into condition</option>
@@ -72,6 +73,9 @@
       <button data-preset="prespost">Presidential: day after election</button>
       <button data-preset="oil">Oil −25% from 52W high</button>
       <button data-preset="spxworst">S&amp;P 500 10 worst days</button>
+      <button data-preset="br200">S&amp;P 500 breadth: &lt;15% above 200D MA</button>
+      <button data-preset="brndx50">Nasdaq 100 breadth: &lt;10% above 50D MA</button>
+      <button data-preset="brnl">S&amp;P 500: &gt;20% at new 52W lows</button>
     </div>
     <div class="hint" id="hint"></div>
   </div>
@@ -112,96 +116,7 @@ function heat(v, scale) {
   return `color-mix(in srgb, var(${pole}) ${(Math.abs(t) * CAP).toFixed(1)}%, var(--mid))`;
 }
 
-/* ---------- condition rows ---------- */
-function seriesOptions(sel) {
-  const groups = {industry: 'GICS industries', sector: 'GICS sectors',
-                  asset_class: 'Asset classes', benchmark: 'Benchmark',
-                  ff_industry: 'Ken French 49 industries, value-weighted (total return, 1926+)',
-                  ff_industry_ew: 'Ken French 49 industries, equal-weighted (total return, 1926+)'};
-  let html = '';
-  for (const g of ['industry', 'sector', 'asset_class', 'benchmark', 'ff_industry', 'ff_industry_ew']) {
-    const rows = SERIES.filter(s => s.grp === g);
-    if (!rows.length) continue;
-    html += `<optgroup label="${groups[g]}">`;
-    for (const s of rows)
-      html += `<option value="${s.id}"${s.id === sel ? ' selected' : ''}>${s.name}</option>`;
-    html += '</optgroup>';
-  }
-  return html;
-}
-/* An up/down streak row carries an optional total-move box: "5 down days in a row,
-   down 5% or more in total". It is sent as a second, ANDed streak_ret condition. */
-const STREAK = ['up_streak', 'down_streak'];
-/* Calendar criteria pick a value from a list instead of taking a threshold, and are
-   sent as "==". cycle_year is year % 4, election_day is sessions from US election
-   day (even years only; midterm_day / pres_day keep one kind), as in engine.metric_series. */
-const ELECTION_PICK = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5].map(k => [k,
-    k === 0 ? 'Election day' : k === -1 ? 'Day before (−1)' : k === 1 ? 'Day after (+1)'
-    : (k > 0 ? '+' : '−') + Math.abs(k) + ' sessions']);
-const CAL = {
-  cycle_year: [[0, 'Election year'], [1, 'Post-election year'], [2, 'Midterm year'], [3, 'Pre-election year']],
-  election_day: ELECTION_PICK,
-  midterm_day: ELECTION_PICK,
-  pres_day: ELECTION_PICK,
-  /* bit set (engine.midterm_flip_code), tested with "has": every bit of the pick present */
-  midterm_flip: [[64, 'Any chamber flipped'], [1, 'Flipped D → R (any chamber)'],
-                 [2, 'Flipped R → D (any chamber)'], [4, 'Both chambers flipped'],
-                 [5, 'Both flipped D → R'], [6, 'Both flipped R → D'],
-                 [16, 'House flipped'], [32, 'Senate flipped'], [8, 'No flip (both held)']],
-  month: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((m, i) => [i + 1, m]),
-};
-function addCond(series, metric, op, value, move) {
-  const div = document.createElement('div');
-  div.className = 'cond';
-  div.innerHTML =
-    `<select class="series">${seriesOptions(series)}</select>
-     <select class="metric">${METRICS.map(m =>
-       `<option value="${m.id}"${m.id === metric ? ' selected' : ''}>${m.label}</option>`).join('')}</select>
-     <select class="op">${['<=', '>=', '<', '>'].map(o =>
-       `<option${o === op ? ' selected' : ''}>${o}</option>`).join('')}</select>
-     <input type="number" class="val" value="${value}" step="0.5">
-     <select class="pick"></select>
-     <span class="streak-move"><span class="dir"></span> &ge;
-       <input type="number" class="move" value="${move ?? ''}" min="0" step="0.5"
-              placeholder="any" title="Total move over the run, from the close before it began. Blank = any size."> %</span>
-     <button class="rm" title="remove">✕</button>`;
-  const met = div.querySelector('.metric'), mv = div.querySelector('.streak-move');
-  const pick = div.querySelector('.pick');
-  const sync = () => {
-    const cal = CAL[met.value];
-    div.querySelector('.op').hidden = div.querySelector('.val').hidden = !!cal;
-    pick.hidden = !cal;
-    if (cal && pick.dataset.for !== met.value) {
-      pick.innerHTML = cal.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
-      if (met.value === metric && cal.some(([v]) => v === value)) pick.value = value;
-      pick.dataset.for = met.value;
-    }
-    mv.hidden = !STREAK.includes(met.value);
-    mv.querySelector('.dir').textContent = met.value === 'up_streak' ? '& up' : '& down';
-  };
-  met.addEventListener('change', sync);
-  sync();
-  div.querySelector('.rm').onclick = () => {
-    if ($('#conds').children.length > 1) div.remove();
-  };
-  $('#conds').appendChild(div);
-}
-function readConds() {
-  return [...document.querySelectorAll('.cond')].flatMap(d => {
-    const c = {
-      series: d.querySelector('.series').value,
-      metric: d.querySelector('.metric').value,
-      op: d.querySelector('.op').value,
-      value: parseFloat(d.querySelector('.val').value),
-    };
-    if (CAL[c.metric]) { c.op = c.metric === 'midterm_flip' ? 'has' : '=='; c.value = parseFloat(d.querySelector('.pick').value); }
-    const move = parseFloat(d.querySelector('.move').value);
-    if (!STREAK.includes(c.metric) || !(move > 0)) return [c];
-    const up = c.metric === 'up_streak';
-    return [c, {series: c.series, metric: 'streak_ret', op: up ? '>=' : '<=',
-                value: up ? move : -move}];
-  });
-}
+/* condition rows: static/conds.js */
 $('#add-cond').onclick = () => addCond('ac:s_p500', 'dd_52w_high', '<=', -10);
 
 /* ---------- presets ---------- */
@@ -222,6 +137,9 @@ const PRESETS = {
   prespre:  [['ac:s_p500', 'pres_day', '==', -1]],
   prespost: [['ac:s_p500', 'pres_day', '==', 1]],
   oil:        [['ac:oil', 'dd_52w_high', '<=', -25]],
+  br200:      [['br:SPX', 'br_ma200', '<=', 15]],
+  brndx50:    [['br:NDX', 'br_ma50', '<=', 10]],
+  brnl:       [['br:SPX', 'br_nl', '>=', 20]],
   spxworst:   {conds: [['ac:s_p500', 'ret_1d', '<=', -3]], mode: 'every_day', gap: 0,
                top: [10, 'lowest', 'Last 1D']},
 };
@@ -230,7 +148,7 @@ document.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
   const p = PRESETS[b.dataset.preset], spec = Array.isArray(p) ? {conds: p} : p;
   $('#conds').innerHTML = '';
   spec.conds.forEach(c => addCond(...c));
-  $('#measure').value = '';
+  resetMeasure();
   $('#mode').value = spec.mode || 'first_entry';
   $('#gap').value = spec.gap ?? 63;
   const [n, dir, col] = spec.top || ['', 'lowest', 'Last 1D'];
@@ -260,7 +178,7 @@ function payload() {
           start: $('#start').value, end: $('#end').value,
           top_n: parseInt($('#topn').value || 0), top_dir: $('#topdir').value,
           top_col: $('#topcol').value,
-          path_pre: PATH.pre, path_post: PATH.post};
+          path_pre: PATH.pre, path_post: PATH.post, br_u: BR.u, br_m: BR.m};
 }
 async function run() {
   $('#run').disabled = true;
@@ -415,6 +333,8 @@ function render(j) {
     </div>` : j.n_events ? `<div class="card hint">The daily path chart is drawn for up to 100 events
       (this study has ${j.n_events}) &mdash; narrow it with Top X or Min gap.</div>` : ''}
 
+    ${j.breadth ? breadthCard(j.breadth) : ''}
+
     <div class="card">
       <h2>Event returns</h2>
       ${ranked ? `<div class="hint" style="margin:0 0 8px">Ranked by ${REQ.top_dir} ${rankLabel(RK)}
@@ -472,10 +392,54 @@ function render(j) {
     </div>`;
 
   drawChart(j);
+  document.querySelectorAll('.br-pick').forEach(s => s.onchange = () => { BR[s.dataset.k] = s.value; run(); });
   if (j.paths) {
     document.querySelectorAll('.path-pick').forEach(s => s.onchange = () => { PATH[s.dataset.k] = +s.value; run(); });
     drawPaths(j.paths);
   }
+}
+
+/* ---------- breadth around events ---------- */
+/* which breadth series the card shows; lives here because the card is re-rendered every run */
+const BR = {u: 'SPX', m: 'br_ma200'};
+function breadthCard(B) {
+  const f = v => v == null ? '' : v.toFixed(1);
+  const dev = B.events.flatMap(e => e.values).filter(v => v != null).map(v => Math.abs(v - B.hist_avg));
+  const sc = Math.max(1, ...dev);
+  const cellv = v => `<td style="background:${v == null ? '' : heat(v - B.hist_avg, sc)}">${f(v)}</td>`;
+  const ev = B.offsets.indexOf('Event');
+  const cls = j => j === ev ? ' class="gap sortcol"' : j === ev + 1 ? ' class="gap"' : '';
+  const row = e => `<tr><td class="date">${e.date}</td>${e.values.map((v, j) =>
+    cellv(v).replace('<td', `<td${cls(j)}`)).join('')}</tr>`;
+  const stat = (label, arr, fmt, heatIt) => `<tr class="stat"><td class="date">${label}</td>${arr.map((v, j) =>
+    (heatIt ? cellv(v) : `<td>${fmt(v)}</td>`).replace('<td', `<td${cls(j)}`)).join('')}</tr>`;
+  const sgn = v => v == null ? '' : (v > 0 ? '+' : '') + v.toFixed(1) + ' pp';
+  const uOpts = BREADTH_UNIVERSES.map(([c, l]) => `<option value="${c}"${c === BR.u ? ' selected' : ''}>${l}</option>`).join('');
+  const mOpts = METRICS.filter(m => isBreadthMetric(m.id)).map(m =>
+    `<option value="${m.id}"${m.id === BR.m ? ' selected' : ''}>${m.label.replace('Breadth: ', '')}</option>`).join('');
+  return `<div class="card">
+    <div class="path-head">
+      <h2>Breadth around events</h2>
+      <label class="opt"><select class="br-pick" data-k="u">${uOpts}</select>
+        <select class="br-pick" data-k="m">${mOpts}</select></label>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr class="hdr"><th class="date">Event</th>${B.offsets.map((o, j) =>
+        `<th${cls(j)}>${o === 'Event' ? 'Event day' : o}</th>`).join('')}</tr></thead>
+      <tbody>${B.events.length ? B.events.map(row).join('')
+        : `<tr><td class="date muted" colspan="${B.offsets.length + 1}">No events inside the breadth history (${B.first} → ${B.last}).</td></tr>`}</tbody>
+      <tfoot>
+        ${stat('Average', B.stats.avg, f, true).replace('class="stat"', 'class="stat sep"')}
+        ${stat('Median', B.stats.median, f, true)}
+        ${stat('Avg change vs event day', B.stats.chg, sgn, false)}
+        ${stat('N', B.stats.n, v => v, false)}
+      </tfoot>
+    </table></div>
+    <div class="legend">
+      <span>${B.label.replace('Breadth: ', '')} — % of ${BREADTH_UNIVERSES.find(([c]) => c === B.universe)?.[1] || B.universe} members, at fixed trading-day offsets from each event (−3M = 63 sessions before … +12M = 252 after)</span>
+      <span>shading: below → above the all-history average of <b>${f(B.hist_avg)}%</b> (median ${f(B.hist_median)}%), ${B.first} → ${B.last}</span>
+    </div>
+  </div>`;
 }
 
 /* path chart window, in trading days on the table's horizon convention; the pickers
@@ -687,7 +651,7 @@ $('#btn-update').onclick = async () => {
     (await fetch('/api/series')).json(),
     (await fetch('/api/metrics')).json(),
   ]);
-  $('#measure').innerHTML = '<option value="">same as condition 1</option>' + seriesOptions();
+  initMeasure();
   addCond('ind:semiconductors_semiconductor_equipment', 'dd_52w_high', '<=', -20);
   $('#hint').textContent =
     'Percentages are entered as numbers: −20 means 20% below the 52-week high; up/down streaks are counted in days, and the "& down ≥ %" box next to them ' +

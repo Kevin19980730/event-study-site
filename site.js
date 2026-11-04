@@ -162,6 +162,66 @@ function prepare() {
   }
 }
 const EMPTY = {d: new Int32Array(0), v: new Float64Array(0), p0: -1};
+
+/* breadth internals (engine.load_breadth): DATA.breadth[universe][metric] = {d0, dd, v}
+   with v = round(% x 100), as published to 2 dp; the condition's series is "br:<universe>" */
+const BX = {};
+function breadthSeries(u, metric) {
+  const key = u + '|' + metric;
+  if (BX[key]) return BX[key];
+  const s = DATA.breadth?.[u]?.[metric];
+  if (!s) return EMPTY;
+  const n = s.dd.length, d = new Int32Array(n), v = new Float64Array(n);
+  let day = s.d0;
+  for (let i = 0; i < n; i++) { day += s.dd[i]; d[i] = day; v[i] = s.v[i] / 100; }
+  return (BX[key] = {d, v, p0: -1});
+}
+const isBreadth = metric => metric.startsWith('br_');
+const breadthUniverse = sid => typeof sid === 'string' && sid.startsWith('br:') ? sid.slice(3) : null;
+/* the series a condition tests and its calendar -- engine.condition_series */
+function condSeries(c) {
+  if (isBreadth(c.metric)) { const b = breadthSeries(breadthUniverse(c.series) || '', c.metric); return {d: b.d, m: b.v}; }
+  const s = series(c.series);
+  return {d: s.d, m: s.v.length ? metricSeries(c.series, c.metric) : new Float64Array(0)};
+}
+const BREADTH_INDEX = {SPX: 'ac:s_p500', NDX: 'ac:nasdaq_100', RTY: 'ac:russell_2000',
+  SPR: 'bm:s_p_1500_composite', S5COND: 'sec:consumer_discretionary', S5CONS: 'sec:consumer_staples',
+  S5ENRS: 'sec:energy', S5FINL: 'sec:financials', S5HLTH: 'sec:health_care', S5INDU: 'sec:industrials',
+  S5INFT: 'sec:information_technology', S5MATR: 'sec:materials', S5RLST: 'sec:real_estate',
+  S5TELS: 'sec:communication_services', S5UTIL: 'sec:utilities'};
+function defaultMeasure(conds) {            // engine.default_measure
+  for (const c of conds) if (!breadthUniverse(c.series)) return c.series;
+  return BREADTH_INDEX[breadthUniverse(conds[0].series)] || 'ac:s_p500';
+}
+const BREADTH_OFFSETS = [['−3M', -63], ['−1M', -21], ['−1W', -5], ['Event', 0],
+  ['+1W', 5], ['+1M', 21], ['+3M', 63], ['+6M', 126], ['+12M', 252]];
+/* engine.breadth_around */
+function breadthAround(days, u, metric) {
+  const b = breadthSeries(u, metric);
+  if (!b.v.length) return null;
+  const rows = [];
+  for (const day of days) {
+    const pos = lowerBound(b.d, day);
+    if (pos >= b.d.length || b.d[pos] - day > 7) continue;
+    rows.push({date: iso(day), values: BREADTH_OFFSETS.map(([, k]) =>
+      pos + k >= 0 && pos + k < b.v.length ? b.v[pos + k] : null)});
+  }
+  const ev = 3, mean = xs => xs.reduce((a, x) => a + x, 0) / xs.length;
+  const stats = {avg: [], median: [], chg: [], n: []};
+  BREADTH_OFFSETS.forEach((_, j) => {
+    const xs = rows.map(r => r.values[j]).filter(x => x !== null);
+    stats.avg.push(xs.length ? mean(xs) : null);
+    stats.median.push(xs.length ? median([...xs].sort((a, c) => a - c)) : null);
+    const ch = rows.filter(r => r.values[j] !== null && r.values[ev] !== null).map(r => r.values[j] - r.values[ev]);
+    stats.chg.push(ch.length ? mean(ch) : null);
+    stats.n.push(xs.length);
+  });
+  const all = Array.from(b.v);
+  return {universe: u, metric, label: DATA.metricLabels[metric] || metric,
+          offsets: BREADTH_OFFSETS.map(([l]) => l), events: rows, stats,
+          hist_avg: mean(all), hist_median: median([...all].sort((a, c) => a - c)),
+          first: iso(b.d[0]), last: iso(b.d[b.d.length - 1])};
+}
 const series = sid => PX[sid] || EMPTY;
 
 const DAY = 86400000;
@@ -303,7 +363,7 @@ function metricSeries(sid, metric) {
   mcache.set(key, out);
   return out;
 }
-const PCT = id => !['price', 'up_streak', 'down_streak', 'cycle_year', 'month', 'election_day', 'midterm_day', 'pres_day', 'midterm_flip'].includes(id);
+const PCT = id => !id.startsWith('br_') && !['price', 'up_streak', 'down_streak', 'cycle_year', 'month', 'election_day', 'midterm_day', 'pres_day', 'midterm_flip'].includes(id);
 function applyOp(x, op, val) {
   if (op === '==') return x === val;
   if (op === 'has') return ((Number.isNaN(x) ? 0 : x) & val) === val;
@@ -319,9 +379,8 @@ function findEvents(conds, minGap, mode, start, end) {
   if (!conds.length) return [];
   let baseD = null, combined = null;
   for (const c of conds) {
-    const s = series(c.series);
-    if (!s.v.length) return [];
-    const m = metricSeries(c.series, c.metric);
+    const s = condSeries(c), m = s.m;
+    if (!m.length) return [];
     const val = PCT(c.metric) ? c.value / 100 : c.value;
     const mask = new Uint8Array(m.length);
     for (let i = 0; i < m.length; i++) mask[i] = (!Number.isNaN(m[i]) && applyOp(m[i], c.op, val)) ? 1 : 0;
@@ -417,9 +476,8 @@ function summarize(rows, cols) {
 function conditionNow(conds) {
   const detail = []; let met = true;
   for (const c of conds) {
-    const s = series(c.series);
-    if (!s.v.length) return {met: false, detail: []};
-    const m = metricSeries(c.series, c.metric);
+    const s = condSeries(c), m = s.m;
+    if (!m.length) return {met: false, detail: []};
     let i = m.length - 1; while (i >= 0 && Number.isNaN(m[i])) i--;
     if (i < 0) return {met: false, detail: []};
     const val = m[i], thresh = PCT(c.metric) ? c.value / 100 : c.value;
@@ -496,7 +554,7 @@ function parseRequest(p) {
     series: c.series, metric: c.metric, op: c.op, value: parseFloat(c.value)}));
   if (!conds.length) throw new Error('add at least one condition');
   if (conds.some(c => Number.isNaN(c.value))) throw new Error('could not convert string to float');
-  return {conditions: conds, measure: p.measure || conds[0].series,
+  return {conditions: conds, measure: p.measure || defaultMeasure(conds),
           minGap: p.min_gap === undefined ? 63 : parseInt(p.min_gap),
           mode: p.mode || 'first_entry', start: p.start || null, end: p.end || null,
           topN: Math.max(0, parseInt(p.top_n) || 0), topCol: p.top_col || 'Last 1D',
@@ -547,6 +605,8 @@ function study(payload) {
   const meta = DATA.series.find(x => x.id === kw.measure) || {};
   const win = (k, d) => Math.min(Math.max(parseInt(payload[k] == null || payload[k] === '' ? d : payload[k]), 0), 378);
   const paths = table.length ? eventPaths(table, s, win('path_pre', 10), win('path_post', 21)) : null;
+  const brM = DATA.metricLabels[payload.br_m] && isBreadth(payload.br_m) ? payload.br_m : 'br_ma200';
+  const breadth = table.length ? breadthAround(table.map(r => r.day), payload.br_u || 'SPX', brM) : null;
   return {
     kw, table, days,
     json: {
@@ -558,7 +618,7 @@ function study(payload) {
       measure: {name: meta.name, ticker: meta.ticker}, measure_id: kw.measure,
       chart: {dates: idx.map(i => iso(s.d[i])), levels: idx.map(i => s.v[i]),
               events: table.map(r => iso(r.day))},
-      paths,
+      paths, breadth,
     },
   };
 }
