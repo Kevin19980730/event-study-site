@@ -333,8 +333,8 @@ function render(j) {
     </div>` : j.n_events ? `<div class="card hint">The daily path chart is drawn for up to 100 events
       (this study has ${j.n_events}) &mdash; narrow it with Top X or Min gap.</div>` : ''}
 
-    ${j.breadth_snap ? snapCard(j.breadth_snap) : ''}
-    ${j.breadth ? breadthCard(j.breadth) : ''}
+    ${j.breadth_snap ? snapCard(j.breadth_snap, j.events.map(e => e.date), j.breadth?.first) : ''}
+    ${j.breadth ? breadthCard(j.breadth, j.events.map(e => e.date)) : ''}
 
     <div class="card">
       <h2>Event returns</h2>
@@ -405,7 +405,15 @@ function render(j) {
 const BR = {u: 'SPX', m: 'br_ma200'};
 /* shading direction: green = healthier breadth; more new lows / oversold members is weaker */
 const BR_SIGN = m => m === 'br_nl' || m === 'br_rsilo' ? -1 : 1;
-function breadthCard(B) {
+/* every event of the study, in date order: rows with breadth, plus a greyed row for
+   each event the universe's breadth history doesn't cover (so none vanish silently) */
+function withMissing(rows, evDates, uname, first, ncols, render) {
+  const have = new Map(rows.map(r => [r.date, r]));
+  return [...new Set([...evDates, ...rows.map(r => r.date)])].sort().map(d => have.has(d) ? render(have.get(d))
+    : `<tr class="nodata"><td class="date muted">${d}</td><td class="muted" colspan="${ncols}">no ${uname} breadth data${
+        first && d < first ? ` (history starts ${first})` : ''}</td></tr>`).join('');
+}
+function breadthCard(B, evDates = []) {
   const f = v => v == null ? '' : v.toFixed(1);
   const dev = B.events.flatMap(e => e.values).filter(v => v != null).map(v => Math.abs(v - B.hist_avg));
   const sc = Math.max(1, ...dev);
@@ -429,8 +437,8 @@ function breadthCard(B) {
     <div class="scroll"><table>
       <thead><tr class="hdr"><th class="date">Event</th>${B.offsets.map((o, j) =>
         `<th${cls(j)}>${o === 'Event' ? 'Event day' : o}</th>`).join('')}</tr></thead>
-      <tbody>${B.events.length ? B.events.map(row).join('')
-        : `<tr><td class="date muted" colspan="${B.offsets.length + 1}">No events inside the breadth history (${B.first} → ${B.last}).</td></tr>`}</tbody>
+      <tbody>${withMissing(B.events, evDates, BREADTH_UNIVERSES.find(([c]) => c === B.universe)?.[1] || B.universe,
+        B.first, B.offsets.length, row)}</tbody>
       <tfoot>
         ${stat('Average', B.stats.avg, f, true).replace('class="stat"', 'class="stat sep"')}
         ${stat('Median', B.stats.median, f, true)}
@@ -446,7 +454,7 @@ function breadthCard(B) {
 }
 
 /* all 7 internals of the chosen universe on each event date */
-function snapCard(B) {
+function snapCard(B, evDates = [], first = null) {
   const f = v => v == null ? '' : v.toFixed(1);
   const sc = B.stats.hist_avg.map((h, j) => Math.max(1, ...B.events.map(e => e.values[j])
     .filter(v => v != null).map(v => Math.abs(v - h))));
@@ -464,8 +472,7 @@ function snapCard(B) {
     </div>
     <div class="scroll"><table>
       <thead><tr class="hdr"><th class="date">Event</th>${B.labels.map(l => `<th title="${l}">${short(l)}</th>`).join('')}</tr></thead>
-      <tbody>${B.events.map(e => row(e.date, e.values)).join('') ||
-        `<tr><td class="date muted" colspan="8">No events inside the ${uname} breadth history.</td></tr>`}
+      <tbody>${withMissing(B.events, evDates, uname, first, B.labels.length, e => row(e.date, e.values))}
         ${B.latest ? row(`${B.latest.date} <span class="tag">now</span>`, B.latest.values, 'latest') : ''}</tbody>
       <tfoot>
         ${row('Average', B.stats.avg, 'stat sep')}
