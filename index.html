@@ -6,7 +6,7 @@
 <title>Event Study — GICS industries, sectors & asset classes</title>
 <link rel="stylesheet" href="app.css?v=5be79c204a">
 <script src="conds.js?v=2135b733d9"></script>
-<script src="site.js?v=25f1c31cae"></script>
+<script src="site.js?v=c95f5b4af6"></script>
 <style>#btn-update{display:none}</style>
 </head>
 <body>
@@ -333,6 +333,7 @@ function render(j) {
     </div>` : j.n_events ? `<div class="card hint">The daily path chart is drawn for up to 100 events
       (this study has ${j.n_events}) &mdash; narrow it with Top X or Min gap.</div>` : ''}
 
+    ${j.breadth_snap ? snapCard(j.breadth_snap) : ''}
     ${j.breadth ? breadthCard(j.breadth) : ''}
 
     <div class="card">
@@ -402,11 +403,13 @@ function render(j) {
 /* ---------- breadth around events ---------- */
 /* which breadth series the card shows; lives here because the card is re-rendered every run */
 const BR = {u: 'SPX', m: 'br_ma200'};
+/* shading direction: green = healthier breadth; more new lows / oversold members is weaker */
+const BR_SIGN = m => m === 'br_nl' || m === 'br_rsilo' ? -1 : 1;
 function breadthCard(B) {
   const f = v => v == null ? '' : v.toFixed(1);
   const dev = B.events.flatMap(e => e.values).filter(v => v != null).map(v => Math.abs(v - B.hist_avg));
   const sc = Math.max(1, ...dev);
-  const cellv = v => `<td style="background:${v == null ? '' : heat(v - B.hist_avg, sc)}">${f(v)}</td>`;
+  const cellv = v => `<td style="background:${v == null ? '' : heat(BR_SIGN(B.metric) * (v - B.hist_avg), sc)}">${f(v)}</td>`;
   const ev = B.offsets.indexOf('Event');
   const cls = j => j === ev ? ' class="gap sortcol"' : j === ev + 1 ? ' class="gap"' : '';
   const row = e => `<tr><td class="date">${e.date}</td>${e.values.map((v, j) =>
@@ -437,7 +440,44 @@ function breadthCard(B) {
     </table></div>
     <div class="legend">
       <span>${B.label.replace('Breadth: ', '')} — % of ${BREADTH_UNIVERSES.find(([c]) => c === B.universe)?.[1] || B.universe} members, at fixed trading-day offsets from each event (−3M = 63 sessions before … +12M = 252 after)</span>
-      <span>shading: below → above the all-history average of <b>${f(B.hist_avg)}%</b> (median ${f(B.hist_median)}%), ${B.first} → ${B.last}</span>
+      <span>shading: weaker → healthier than the all-history average of <b>${f(B.hist_avg)}%</b> (median ${f(B.hist_median)}%), ${B.first} → ${B.last}${BR_SIGN(B.metric) < 0 ? ' — for this internal a higher reading is weaker breadth' : ''}</span>
+    </div>
+  </div>`;
+}
+
+/* all 7 internals of the chosen universe on each event date */
+function snapCard(B) {
+  const f = v => v == null ? '' : v.toFixed(1);
+  const sc = B.stats.hist_avg.map((h, j) => Math.max(1, ...B.events.map(e => e.values[j])
+    .filter(v => v != null).map(v => Math.abs(v - h))));
+  const cellv = (v, j) => `<td style="background:${v == null ? '' :
+    heat(BR_SIGN(B.metrics[j]) * (v - B.stats.hist_avg[j]), sc[j])}">${f(v)}</td>`;
+  const row = (label, vals, cls, heatIt = true) => `<tr${cls ? ` class="${cls}"` : ''}><td class="date">${label}</td>${
+    vals.map((v, j) => heatIt ? cellv(v, j) : `<td>${v == null ? '' : v}</td>`).join('')}</tr>`;
+  const uOpts = BREADTH_UNIVERSES.map(([c, l]) => `<option value="${c}"${c === BR.u ? ' selected' : ''}>${l}</option>`).join('');
+  const uname = BREADTH_UNIVERSES.find(([c]) => c === B.universe)?.[1] || B.universe;
+  const short = l => l.replace('Breadth: ', '').replace('% above ', '> ').replace('% at new ', 'new ').replace('% with ', '');
+  return `<div class="card">
+    <div class="path-head">
+      <h2>Breadth at event date</h2>
+      <label class="opt"><select class="br-pick" data-k="u">${uOpts}</select></label>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr class="hdr"><th class="date">Event</th>${B.labels.map(l => `<th title="${l}">${short(l)}</th>`).join('')}</tr></thead>
+      <tbody>${B.events.map(e => row(e.date, e.values)).join('') ||
+        `<tr><td class="date muted" colspan="8">No events inside the ${uname} breadth history.</td></tr>`}
+        ${B.latest ? row(`${B.latest.date} <span class="tag">now</span>`, B.latest.values, 'latest') : ''}</tbody>
+      <tfoot>
+        ${row('Average', B.stats.avg, 'stat sep')}
+        ${row('Median', B.stats.median, 'stat')}
+        ${row('N', B.stats.n, 'stat', false)}
+        ${row('All-history average', B.stats.hist_avg, 'base sep')}
+        ${row('All-history median', B.stats.hist_median, 'base')}
+      </tfoot>
+    </table></div>
+    <div class="legend">
+      <span>% of ${uname} members on each event's session (as of that close); shading: weaker &rarr; healthier than each internal's all-history average (for new lows and RSI &lt; 30, higher = weaker)</span>
+      <span><span class="tag">now</span> latest reading &mdash; reference only, excluded from the statistics</span>
     </div>
   </div>`;
 }

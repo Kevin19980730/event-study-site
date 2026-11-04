@@ -195,16 +195,25 @@ function defaultMeasure(conds) {            // engine.default_measure
 }
 const BREADTH_OFFSETS = [['−3M', -63], ['−1M', -21], ['−1W', -5], ['Event', 0],
   ['+1W', 5], ['+1M', 21], ['+3M', 63], ['+6M', 126], ['+12M', 252]];
-/* engine.breadth_around */
-function breadthAround(days, u, metric) {
+/* engine.breadth_around: offsets on the MEASURE series' calendar (the return columns'
+   sessions), breadth read as of each date -- last breadth day on/before it, within 3 days */
+const BREADTH_ASOF_DAYS = 3;
+function breadthAround(days, u, metric, measure) {
   const b = breadthSeries(u, metric);
   if (!b.v.length) return null;
+  const ms = measure ? series(measure) : null;
+  const cal = ms && ms.d.length ? ms.d : b.d;
+  const asof = day => {
+    const k = upperBound(b.d, day) - 1;
+    return k < 0 || day - b.d[k] > BREADTH_ASOF_DAYS ? null : b.v[k];
+  };
   const rows = [];
   for (const day of days) {
-    const pos = lowerBound(b.d, day);
-    if (pos >= b.d.length || b.d[pos] - day > 7) continue;
-    rows.push({date: iso(day), values: BREADTH_OFFSETS.map(([, k]) =>
-      pos + k >= 0 && pos + k < b.v.length ? b.v[pos + k] : null)});
+    const pos = lowerBound(cal, day);
+    if (pos >= cal.length || cal[pos] - day > 7) continue;
+    const values = BREADTH_OFFSETS.map(([, k]) => pos + k >= 0 && pos + k < cal.length ? asof(cal[pos + k]) : null);
+    if (values[3] === null) continue;              // no breadth on the event itself
+    rows.push({date: iso(day), values});
   }
   const ev = 3, mean = xs => xs.reduce((a, x) => a + x, 0) / xs.length;
   const stats = {avg: [], median: [], chg: [], n: []};
@@ -372,6 +381,43 @@ function applyOp(x, op, val) {
   if (op === '<') return x < val;
   if (op === '>') return x > val;
   throw new Error('unknown operator ' + op);
+}
+
+/* engine.breadth_snapshot: every internal of one universe on each event date */
+const BREADTH_IDS = ['br_ma200', 'br_ma50', 'br_ma20', 'br_nh', 'br_nl', 'br_rsihi', 'br_rsilo'];
+function breadthSnapshot(days, u, measure) {
+  const S = BREADTH_IDS.map(m => breadthSeries(u, m));
+  if (S.every(s => !s.v.length)) return null;
+  const ms = measure ? series(measure) : null;
+  const cal = ms && ms.d.length ? ms.d : S[0].d;
+  const asof = (s, day) => {
+    if (!s.v.length) return null;
+    const k = upperBound(s.d, day) - 1;
+    return k < 0 || day - s.d[k] > BREADTH_ASOF_DAYS ? null : s.v[k];
+  };
+  const rows = [];
+  for (const d of days) {
+    const pos = cal.length ? lowerBound(cal, d) : 0;
+    const day = cal.length && pos < cal.length && cal[pos] - d <= 7 ? cal[pos] : d;
+    const values = S.map(s => asof(s, day));
+    if (values.every(v => v === null)) continue;
+    rows.push({date: iso(d), values});
+  }
+  const mean = xs => xs.reduce((a, x) => a + x, 0) / xs.length;
+  const stats = {avg: [], median: [], n: [], hist_avg: [], hist_median: []};
+  S.forEach((s, j) => {
+    const xs = rows.map(r => r.values[j]).filter(x => x !== null);
+    stats.avg.push(xs.length ? mean(xs) : null);
+    stats.median.push(xs.length ? median([...xs].sort((a, c) => a - c)) : null);
+    stats.n.push(xs.length);
+    const hv = Array.from(s.v);
+    stats.hist_avg.push(hv.length ? mean(hv) : null);
+    stats.hist_median.push(hv.length ? median([...hv].sort((a, c) => a - c)) : null);
+  });
+  const last = S[0].v.length ? S[0].d[S[0].d.length - 1] : null;
+  return {universe: u, metrics: BREADTH_IDS, labels: BREADTH_IDS.map(m => DATA.metricLabels[m] || m),
+          events: rows, stats,
+          latest: last === null ? null : {date: iso(last), values: S.map(s => asof(s, last))}};
 }
 
 /* ------------------------------------------------------------- detection */
@@ -606,7 +652,8 @@ function study(payload) {
   const win = (k, d) => Math.min(Math.max(parseInt(payload[k] == null || payload[k] === '' ? d : payload[k]), 0), 378);
   const paths = table.length ? eventPaths(table, s, win('path_pre', 10), win('path_post', 21)) : null;
   const brM = DATA.metricLabels[payload.br_m] && isBreadth(payload.br_m) ? payload.br_m : 'br_ma200';
-  const breadth = table.length ? breadthAround(table.map(r => r.day), payload.br_u || 'SPX', brM) : null;
+  const breadth = table.length ? breadthAround(table.map(r => r.day), payload.br_u || 'SPX', brM, kw.measure) : null;
+  const breadth_snap = table.length ? breadthSnapshot(table.map(r => r.day), payload.br_u || 'SPX', kw.measure) : null;
   return {
     kw, table, days,
     json: {
@@ -618,7 +665,7 @@ function study(payload) {
       measure: {name: meta.name, ticker: meta.ticker}, measure_id: kw.measure,
       chart: {dates: idx.map(i => iso(s.d[i])), levels: idx.map(i => s.v[i]),
               events: table.map(r => iso(r.day))},
-      paths, breadth,
+      paths, breadth, breadth_snap,
     },
   };
 }
