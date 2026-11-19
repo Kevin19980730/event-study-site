@@ -23,7 +23,7 @@ tr.secrow td.name{background:var(--surface-2);text-transform:uppercase;
   font-size:11px;letter-spacing:.04em}
 .sub{font-size:11px;color:var(--text-muted);display:block;font-weight:400}
 </style>
-<script src="site.js?v=7536233fe4"></script>
+<script src="site.js?v=7b588a1ed8"></script>
 <style>#btn-update{display:none}</style>
 </head>
 <body>
@@ -388,7 +388,7 @@ function renderPeriod() {
       <td class="name" title="${r.ticker || ''}">${r.name}${r.grp === 'industry' && r.sector ?
         `<span class="sub">${r.sector}</span>` : ''}</td>
       <td class="muted">${r.from}</td><td class="muted">${r.to}</td>
-      ${cols.map(c => `<td class="${c === PSORT ? 'sortcol' : ''}" style="background:${
+      ${cols.map(c => `<td class="${c === 'Next 3M' ? 'gap' : ''}${c === PSORT ? ' sortcol' : ''}" style="background:${
         NO_HEAT.has(c) ? '' : heat(r.stats[c], scale[c])}">${pct(r.stats[c])}</td>`).join('')}
     </tr>`).join('');
   const nIn = g => j.rows.filter(r => r.grp === g).length;
@@ -409,13 +409,14 @@ function renderPeriod() {
         no close within 7 days of one of the dates (started later or stopped earlier).</div>` : ''}
       <div class="scroll"><table>
         <thead><tr class="hdr"><th class="rank">#</th><th class="name">Series</th>
-          <th>From</th><th>To</th>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+          <th>From</th><th>To</th>${cols.map(c => `<th class="${c === 'Next 3M' ? 'gap' : ''}">${c}</th>`).join('')}</tr></thead>
         <tbody>${body || `<tr><td colspan="99" class="muted">No series cover this period.</td></tr>`}</tbody>
       </table></div>
       <div class="legend">
         <span>Annualised only for windows of ~a year or more · a series whose data ends early (Ken French lags 1–2 months) runs to its last close — see To</span>
         <span>Volatility = annualised sd of daily returns</span>
         <span>vs S&amp;P 500 = return minus S&amp;P 500 price return</span>
+        <span>Next 3M / 6M / 12M = return after the To close (63 / 126 / 252 sessions) — blank if not enough history yet</span>
       </div>
     </div>`;
   $('#out').querySelectorAll('[data-tab]').forEach(b =>
