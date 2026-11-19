@@ -779,7 +779,7 @@ function rotateCSV(payload) {
 }
 
 /* ------------------------------------------------- fixed period (engine.period_returns) */
-const PERIOD_AFTER = [['Next 3M', 63], ['Next 6M', 126], ['Next 12M', 252]];   // engine.PERIOD_AFTER
+const PERIOD_AFTER = [['First 3M', 63], ['First 6M', 126], ['First 12M', 252]];   // engine.PERIOD_AFTER
 const PERIOD_COLS = ['Return', 'Annualised', 'vs S&P 500', 'Max drawdown', 'Volatility', ...PERIOD_AFTER.map(([c]) => c)];
 function periodReturns(p) {
   if (!p.start || !p.end) throw new Error('pick both From and To dates');
@@ -817,7 +817,7 @@ function periodReturns(p) {
         'Annualised': days >= 360 && ret > -1 ? Math.pow(1 + ret, 365.25 / days) - 1 : null,
         'vs S&P 500': spxRet === null ? null : ret - spxRet,
         'Max drawdown': mdd, 'Volatility': vol,
-        ...Object.fromEntries(PERIOD_AFTER.map(([c, k]) => [c, i1 + k < v.length ? v[i1 + k] / v[i1] - 1 : null]))}});
+        ...Object.fromEntries(PERIOD_AFTER.map(([c, k]) => [c, i0 + k < v.length ? v[i0 + k] / v[i0] - 1 : null]))}});
   }
   return {rows, cols: PERIOD_COLS, skipped, start: iso(t0), end: iso(t1), spx: spxRet};
 }

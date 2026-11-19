@@ -23,7 +23,7 @@ tr.secrow td.name{background:var(--surface-2);text-transform:uppercase;
   font-size:11px;letter-spacing:.04em}
 .sub{font-size:11px;color:var(--text-muted);display:block;font-weight:400}
 </style>
-<script src="site.js?v=7b588a1ed8"></script>
+<script src="site.js?v=8a4b5bc452"></script>
 <style>#btn-update{display:none}</style>
 </head>
 <body>
@@ -93,22 +93,49 @@ tr.secrow td.name{background:var(--surface-2);text-transform:uppercase;
       <button id="p-csv">Export CSV</button>
     </div>
     <div class="presets">
-      <span class="muted" style="font-size:12px;align-self:center">Periods:</span>
-      <button data-period="2000-01-01|2001-01-01">2000</button>
-      <button data-period="2000-03-24|2002-10-09">Dot-com bust</button>
-      <button data-period="2002-10-09|2007-10-09">2002–07 bull</button>
-      <button data-period="2007-10-09|2009-03-09">GFC</button>
-      <button data-period="2009-03-09|2020-02-19">2009–20 bull</button>
-      <button data-period="2018-09-20|2018-12-24">2018 Q4 crash</button>
-      <button data-period="2020-02-19|2020-03-23">COVID crash</button>
-      <button data-period="2020-03-23|2022-01-03">2020–21 rebound</button>
-      <button data-period="2022-01-03|2022-10-12">2022 bear</button>
-      <button data-period="2022-10-12|2099-12-31">Since Oct-22 low</button>
+      <span class="muted" style="font-size:12px;align-self:center;min-width:72px">Crashes:</span>
+      <button data-period="1929-09-16|1932-06-01" title="S&amp;P 500 −86% peak to trough, 1929-09-16 → 1932-06-01">1929–32 crash</button>
+      <button data-period="1937-03-10|1938-03-31" title="S&amp;P 500 −55% peak to trough, 1937-03-10 → 1938-03-31">1937–38</button>
+      <button data-period="1973-01-11|1974-10-03" title="S&amp;P 500 −48% peak to trough, 1973-01-11 → 1974-10-03">1973–74 bear</button>
+      <button data-period="1980-11-28|1982-08-12" title="S&amp;P 500 −27% peak to trough, 1980-11-28 → 1982-08-12">1980–82 bear</button>
+      <button data-period="1987-08-25|1987-12-04" title="S&amp;P 500 −34% peak to trough, 1987-08-25 → 1987-12-04">1987 crash</button>
+      <button data-period="1990-07-16|1990-10-11" title="S&amp;P 500 −20% peak to trough, 1990-07-16 → 1990-10-11">1990 Gulf War</button>
+      <button data-period="1998-07-17|1998-08-31" title="S&amp;P 500 −19% peak to trough, 1998-07-17 → 1998-08-31">1998 LTCM</button>
+      <button data-period="2000-03-24|2002-10-09" title="S&amp;P 500 −49% peak to trough, 2000-03-24 → 2002-10-09">Dot-com bust</button>
+      <button data-period="2007-10-09|2009-03-09" title="S&amp;P 500 −57% peak to trough, 2007-10-09 → 2009-03-09">GFC</button>
+      <button data-period="2010-04-23|2010-07-02" title="S&amp;P 500 −16% peak to trough, 2010-04-23 → 2010-07-02">2010 Euro / flash crash</button>
+      <button data-period="2011-04-29|2011-10-03" title="S&amp;P 500 −19% peak to trough, 2011-04-29 → 2011-10-03">2011 US downgrade</button>
+      <button data-period="2015-05-21|2016-02-11" title="S&amp;P 500 −14% peak to trough, 2015-05-21 → 2016-02-11">2015–16 China / oil</button>
+      <button data-period="2018-01-26|2018-02-08" title="S&amp;P 500 −10% peak to trough, 2018-01-26 → 2018-02-08">Feb-18 Volmageddon</button>
+      <button data-period="2018-09-20|2018-12-24" title="S&amp;P 500 −20% peak to trough, 2018-09-20 → 2018-12-24">2018 Q4 crash</button>
+      <button data-period="2020-02-19|2020-03-23" title="S&amp;P 500 −34% peak to trough, 2020-02-19 → 2020-03-23">COVID crash</button>
+      <button data-period="2022-01-03|2022-10-12" title="S&amp;P 500 −25% peak to trough, 2022-01-03 → 2022-10-12">2022 bear</button>
+      <button data-period="2023-07-31|2023-10-27" title="S&amp;P 500 −10% peak to trough, 2023-07-31 → 2023-10-27">2023 rates spike</button>
+      <button data-period="2024-07-16|2024-08-05" title="S&amp;P 500 −8.5% peak to trough, 2024-07-16 → 2024-08-05">Aug-24 yen carry</button>
+      <button data-period="2025-02-19|2025-04-08" title="S&amp;P 500 −19% peak to trough, 2025-02-19 → 2025-04-08">2025 tariff shock</button>
+    </div>
+    <div class="presets">
+      <span class="muted" style="font-size:12px;align-self:center;min-width:72px">Bull runs:</span>
+      <button data-period="1982-08-12|1987-08-25" title="1982-08-12 → 1987-08-25">1982–87 bull</button>
+      <button data-period="1990-10-11|2000-03-24" title="1990-10-11 → 2000-03-24">1990–2000 bull</button>
+      <button data-period="2002-10-09|2007-10-09" title="2002-10-09 → 2007-10-09">2002–07 bull</button>
+      <button data-period="2009-03-09|2020-02-19" title="2009-03-09 → 2020-02-19">2009–20 bull</button>
+      <button data-period="2020-03-23|2022-01-03" title="2020-03-23 → 2022-01-03">2020–21 rebound</button>
+      <button data-period="2022-10-12|2099-12-31" title="2022-10-12 → latest">Since Oct-22 low</button>
+      <button data-period="2025-04-08|2099-12-31" title="2025-04-08 → latest">Since Apr-25 low</button>
+    </div>
+    <div class="presets">
+      <span class="muted" style="font-size:12px;align-self:center;min-width:72px">Years:</span>
+      <button data-period="2000-01-01|2001-01-01" title="2000-01-01 → 2001-01-01">2000</button>
+      <button data-period="2008-01-01|2009-01-01" title="2008-01-01 → 2009-01-01">2008</button>
+      <button data-period="2022-01-01|2023-01-01" title="2022-01-01 → 2023-01-01">2022</button>
+      <button data-period="2025-01-01|2026-01-01" title="2025-01-01 → 2026-01-01">2025</button>
+      <button data-period="2026-01-01|2099-12-31" title="2026-01-01 → latest">2026 YTD</button>
     </div>
     <div class="hint">Every series over one calendar window, no event criteria. Start = last
       close on or before <b>From</b>, end = last close on or before <b>To</b>, so 2000-01-01 →
       2001-01-01 is calendar 2000. A series is left out if it had not started or had stopped
-      by either date. Price returns, except Ken French industries (total return).</div>
+      by either date — before 1995 that leaves only Ken French industries and long-history asset classes. Price returns, except Ken French industries (total return).</div>
   </div>
 
   <div id="out"></div>
@@ -388,7 +415,7 @@ function renderPeriod() {
       <td class="name" title="${r.ticker || ''}">${r.name}${r.grp === 'industry' && r.sector ?
         `<span class="sub">${r.sector}</span>` : ''}</td>
       <td class="muted">${r.from}</td><td class="muted">${r.to}</td>
-      ${cols.map(c => `<td class="${c === 'Next 3M' ? 'gap' : ''}${c === PSORT ? ' sortcol' : ''}" style="background:${
+      ${cols.map(c => `<td class="${c === 'First 3M' ? 'gap' : ''}${c === PSORT ? ' sortcol' : ''}" style="background:${
         NO_HEAT.has(c) ? '' : heat(r.stats[c], scale[c])}">${pct(r.stats[c])}</td>`).join('')}
     </tr>`).join('');
   const nIn = g => j.rows.filter(r => r.grp === g).length;
@@ -409,14 +436,14 @@ function renderPeriod() {
         no close within 7 days of one of the dates (started later or stopped earlier).</div>` : ''}
       <div class="scroll"><table>
         <thead><tr class="hdr"><th class="rank">#</th><th class="name">Series</th>
-          <th>From</th><th>To</th>${cols.map(c => `<th class="${c === 'Next 3M' ? 'gap' : ''}">${c}</th>`).join('')}</tr></thead>
+          <th>From</th><th>To</th>${cols.map(c => `<th class="${c === 'First 3M' ? 'gap' : ''}">${c}</th>`).join('')}</tr></thead>
         <tbody>${body || `<tr><td colspan="99" class="muted">No series cover this period.</td></tr>`}</tbody>
       </table></div>
       <div class="legend">
         <span>Annualised only for windows of ~a year or more · a series whose data ends early (Ken French lags 1–2 months) runs to its last close — see To</span>
         <span>Volatility = annualised sd of daily returns</span>
         <span>vs S&amp;P 500 = return minus S&amp;P 500 price return</span>
-        <span>Next 3M / 6M / 12M = return after the To close (63 / 126 / 252 sessions) — blank if not enough history yet</span>
+        <span>First 3M / 6M / 12M = return from the From close over 63 / 126 / 252 sessions (can run past To) — blank if not enough history yet</span>
       </div>
     </div>`;
   $('#out').querySelectorAll('[data-tab]').forEach(b =>
