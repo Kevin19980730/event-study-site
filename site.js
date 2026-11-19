@@ -778,6 +778,56 @@ function rotateCSV(payload) {
   return out;
 }
 
+/* ------------------------------------------------- fixed period (engine.period_returns) */
+const PERIOD_COLS = ['Return', 'Annualised', 'vs S&P 500', 'Max drawdown', 'Volatility'];
+function periodReturns(p) {
+  if (!p.start || !p.end) throw new Error('pick both From and To dates');
+  const t0 = toDay(p.start);
+  let t1 = toDay(p.end);
+  if (t1 <= t0) throw new Error('To must be after From');
+  const spx = series('ac:s_p500');
+  if (spx.d.length) t1 = Math.min(t1, spx.d[spx.d.length - 1]);
+  const win = s => {
+    if (!s.d.length) return null;
+    const i0 = upperBound(s.d, t0) - 1, i1 = upperBound(s.d, t1) - 1;
+    if (i0 < 0 || i1 <= i0) return null;
+    const tolEnd = i1 === s.d.length - 1 ? 75 : SNAP_TOLERANCE;   // engine.END_LAG
+    if (t0 - s.d[i0] > SNAP_TOLERANCE || t1 - s.d[i1] > tolEnd) return null;
+    return [i0, i1];
+  };
+  const ws = win(spx), spxRet = ws ? spx.v[ws[1]] / spx.v[ws[0]] - 1 : null;
+  const rows = [], skipped = [];
+  for (const rec of DATA.series) {
+    const s = series(rec.id), w = win(s);
+    if (!w) { if (s.d.length) skipped.push(rec.name); continue; }
+    const [i0, i1] = w, v = s.v, days = s.d[i1] - s.d[i0], ret = v[i1] / v[i0] - 1;
+    let peak = v[i0], mdd = 0, sum = 0, n = 0;
+    const daily = [];
+    for (let i = i0; i <= i1; i++) {
+      if (v[i] > peak) peak = v[i];
+      mdd = Math.min(mdd, v[i] / peak - 1);
+      if (i > i0) { const r = v[i] / v[i - 1] - 1; daily.push(r); sum += r; n++; }
+    }
+    let vol = null;
+    if (n > 1) { const m = sum / n; let ss = 0; for (const r of daily) ss += (r - m) ** 2; vol = Math.sqrt(ss / (n - 1)) * Math.sqrt(252); }
+    rows.push({id: rec.id, name: rec.name, grp: rec.grp, sector: rec.sector, ticker: rec.ticker,
+      from: iso(s.d[i0]), to: iso(s.d[i1]), sessions: i1 - i0, stats: {
+        'Return': ret,
+        'Annualised': days >= 360 && ret > -1 ? Math.pow(1 + ret, 365.25 / days) - 1 : null,
+        'vs S&P 500': spxRet === null ? null : ret - spxRet,
+        'Max drawdown': mdd, 'Volatility': vol}});
+  }
+  return {rows, cols: PERIOD_COLS, skipped, start: iso(t0), end: iso(t1), spx: spxRet};
+}
+function periodCSV(p) {
+  const res = periodReturns(p);
+  let out = csvLine(['group', 'name', 'ticker', 'sector', 'from', 'to', 'sessions', ...res.cols]);
+  for (const r of res.rows)
+    out += csvLine([r.grp, r.name, r.ticker, r.sector || '', r.from, r.to, r.sessions,
+      ...res.cols.map(c => r.stats[c] === null ? '' : pyFloat(rnd(r.stats[c], 6)))]);
+  return out;
+}
+
 /* ----------------------------------------------------------- seasonality */
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -952,6 +1002,8 @@ window.fetch = async function (input, init) {
       case '/api/rotate': return json(rotateJSON(body));
       case '/api/export.csv': return new Response(studyCSV(body), {headers: {'Content-Type': 'text/csv'}});
       case '/api/rotate.csv': return new Response(rotateCSV(body), {headers: {'Content-Type': 'text/csv'}});
+      case '/api/period': return json(periodReturns(body));
+      case '/api/period.csv': return new Response(periodCSV(body), {headers: {'Content-Type': 'text/csv'}});
       case '/api/seasonal': return json(seasonalJSON(body));
       case '/api/seasonal.csv': return new Response(seasonalCSV(body), {headers: {'Content-Type': 'text/csv'}});
       case '/api/update': return json({status: 'unavailable', error: 'read-only website'}, 403);
@@ -964,7 +1016,7 @@ window.fetch = async function (input, init) {
 
 /* exposed for verification against the local app */
 window.EventStudySite = {ready: READY, study: p => study(p).json, rotate: rotateJSON,
-                         studyCSV, rotateCSV, seasonal: seasonalJSON, seasonalCSV,
+                         studyCSV, rotateCSV, period: periodReturns, periodCSV, seasonal: seasonalJSON, seasonalCSV,
                          get data() { return DATA; }};
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', unlock);

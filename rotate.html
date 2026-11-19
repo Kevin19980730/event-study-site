@@ -23,7 +23,7 @@ tr.secrow td.name{background:var(--surface-2);text-transform:uppercase;
   font-size:11px;letter-spacing:.04em}
 .sub{font-size:11px;color:var(--text-muted);display:block;font-weight:400}
 </style>
-<script src="site.js?v=6e022e7ad6"></script>
+<script src="site.js?v=7536233fe4"></script>
 <style>#btn-update{display:none}</style>
 </head>
 <body>
@@ -81,6 +81,33 @@ tr.secrow td.name{background:var(--surface-2);text-transform:uppercase;
       the same event dates. Each series is measured on its own calendar, so one that
       did not exist yet simply has fewer observations — always read <b>N</b> before
       trusting a row.</div>
+  </div>
+
+  <div class="card">
+    <h2>Fixed period</h2>
+    <div class="opts">
+      <label class="opt">From <input type="date" id="p-start" value="2000-01-01"></label>
+      <label class="opt">To <input type="date" id="p-end" value="2001-01-01"></label>
+      <span class="spacer"></span>
+      <button class="primary" id="p-run">Run period</button>
+      <button id="p-csv">Export CSV</button>
+    </div>
+    <div class="presets">
+      <span class="muted" style="font-size:12px;align-self:center">Periods:</span>
+      <button data-period="2000-01-01|2001-01-01">2000</button>
+      <button data-period="2000-03-24|2002-10-09">Dot-com bust</button>
+      <button data-period="2002-10-09|2007-10-09">2002–07 bull</button>
+      <button data-period="2007-10-09|2009-03-09">GFC</button>
+      <button data-period="2009-03-09|2020-02-19">2009–20 bull</button>
+      <button data-period="2020-02-19|2020-03-23">COVID crash</button>
+      <button data-period="2020-03-23|2022-01-03">2020–21 rebound</button>
+      <button data-period="2022-01-03|2022-10-12">2022 bear</button>
+      <button data-period="2022-10-12|2099-12-31">Since Oct-22 low</button>
+    </div>
+    <div class="hint">Every series over one calendar window, no event criteria. Start = last
+      close on or before <b>From</b>, end = last close on or before <b>To</b>, so 2000-01-01 →
+      2001-01-01 is calendar 2000. A series is left out if it had not started or had stopped
+      by either date. Price returns, except Ken French industries (total return).</div>
   </div>
 
   <div id="out"></div>
@@ -300,6 +327,100 @@ function render() {
   $('#minn').onchange = e => { MIN_N = parseInt(e.target.value || 0); render(); };
   const bs = $('#bysec');
   if (bs) bs.onchange = e => { BY_SECTOR = e.target.checked; render(); };
+}
+
+/* ---------- fixed period ---------- */
+let PLAST = null, PSORT = 'Return', PASC = false;
+const pPayload = () => ({start: $('#p-start').value, end: $('#p-end').value});
+async function runPeriod() {
+  $('#p-run').disabled = true;
+  $('#out').innerHTML = '<div class="card muted">Measuring every series…</div>';
+  try {
+    const r = await fetch('/api/period', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify(pPayload())});
+    const j = await r.json();
+    if (!r.ok) { $('#out').innerHTML = `<div class="card err">${j.error}</div>`; return; }
+    PLAST = j; LAST = null;
+    renderPeriod();
+  } catch (e) {
+    $('#out').innerHTML = `<div class="card err">${e}</div>`;
+  } finally { $('#p-run').disabled = false; }
+}
+$('#p-run').onclick = runPeriod;
+$('#p-csv').onclick = async () => {
+  const r = await fetch('/api/period.csv', {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(pPayload())});
+  if (!r.ok) return;
+  const blob = await r.blob(), a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `period_${$('#p-start').value}_${$('#p-end').value}.csv`; a.click();
+};
+document.querySelectorAll('[data-period]').forEach(b => b.onclick = () => {
+  const [s, e] = b.dataset.period.split('|');
+  $('#p-start').value = s; $('#p-end').value = e;
+  runPeriod();
+});
+const NO_HEAT = new Set(['Volatility']);
+
+function renderPeriod() {
+  const j = PLAST;
+  if (!j) return;
+  const cols = j.cols;
+  const rows = j.rows.filter(r => r.grp === TAB);
+  const val = r => r.stats[PSORT];
+  rows.sort((a, b) => {
+    const x = val(a), y = val(b);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return PASC ? x - y : y - x;
+  });
+  const scale = {};
+  for (const c of cols) {
+    let m = 0;
+    for (const r of rows) { const v = r.stats[c]; if (v != null) m = Math.max(m, Math.abs(v)); }
+    scale[c] = m || 0.01;
+  }
+  const spx = j.rows.find(r => r.id === 'ac:s_p500');
+  const body = rows.map((r, i) => `<tr class="${r.id === 'ac:s_p500' ? 'self' : ''}">
+      <td class="rank">${i + 1}</td>
+      <td class="name" title="${r.ticker || ''}">${r.name}${r.grp === 'industry' && r.sector ?
+        `<span class="sub">${r.sector}</span>` : ''}</td>
+      <td class="muted">${r.from}</td><td class="muted">${r.to}</td>
+      ${cols.map(c => `<td class="${c === PSORT ? 'sortcol' : ''}" style="background:${
+        NO_HEAT.has(c) ? '' : heat(r.stats[c], scale[c])}">${pct(r.stats[c])}</td>`).join('')}
+    </tr>`).join('');
+  const nIn = g => j.rows.filter(r => r.grp === g).length;
+  $('#out').innerHTML = `
+    <div class="card">
+      <div class="hero"><span class="n">${pct(spx ? spx.stats.Return : j.spx)}</span>
+        <span class="lbl">S&amp;P 500 — ${spx ? spx.from : j.start} to ${spx ? spx.to : j.end}
+          · ${j.rows.length} series measured</span></div>
+      <div class="tabs">
+        ${GROUPS.map(([g, lbl]) => `<button data-tab="${g}" class="${g === TAB ? 'on' : ''}">${lbl} (${nIn(g)})</button>`).join('')}
+        <span class="spacer"></span>
+        <label class="opt">Rank by
+          <select id="psort">${cols.map(c => `<option${c === PSORT ? ' selected' : ''}>${c}</option>`).join('')}</select>
+          <select id="pdir"><option value="desc">highest first</option>
+            <option value="asc"${PASC ? ' selected' : ''}>lowest first</option></select></label>
+      </div>
+      ${j.skipped.length ? `<div class="hint" style="margin:0 0 8px">${j.skipped.length} series left out —
+        no close within 7 days of one of the dates (started later or stopped earlier).</div>` : ''}
+      <div class="scroll"><table>
+        <thead><tr class="hdr"><th class="rank">#</th><th class="name">Series</th>
+          <th>From</th><th>To</th>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+        <tbody>${body || `<tr><td colspan="99" class="muted">No series cover this period.</td></tr>`}</tbody>
+      </table></div>
+      <div class="legend">
+        <span>Annualised only for windows of ~a year or more · a series whose data ends early (Ken French lags 1–2 months) runs to its last close — see To</span>
+        <span>Volatility = annualised sd of daily returns</span>
+        <span>vs S&amp;P 500 = return minus S&amp;P 500 price return</span>
+      </div>
+    </div>`;
+  $('#out').querySelectorAll('[data-tab]').forEach(b =>
+    b.onclick = () => { TAB = b.dataset.tab; renderPeriod(); });
+  $('#psort').onchange = e => { PSORT = e.target.value; renderPeriod(); };
+  $('#pdir').onchange = e => { PASC = e.target.value === 'asc'; renderPeriod(); };
 }
 
 (async () => {
