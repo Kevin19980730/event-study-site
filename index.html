@@ -6,8 +6,8 @@
 <title>Event Study — GICS industries, sectors & asset classes</title>
 <link rel="stylesheet" href="app.css?v=7c4f10a138">
 <script src="cards.js?v=67b98b55ee"></script>
-<script src="conds.js?v=930690211a"></script>
-<script src="site.js?v=8a4b5bc452"></script>
+<script src="conds.js?v=345d21196c"></script>
+<script src="site.js?v=02a3951e4c"></script>
 <style>#btn-update{display:none}</style>
 </head>
 <body>
@@ -67,6 +67,7 @@
       <button data-preset="midoct">Midterm-year October</button>
       <button data-preset="midpre">Midterm: day before election</button>
       <button data-preset="midpost">Midterm: day after election</button>
+      <button data-preset="fedpeak">Fed funds peak: last-hike day</button>
       <button data-preset="midflipR">Midterm: day after, Congress flipped D → R</button>
       <button data-preset="midflipD">Midterm: day after, Congress flipped R → D</button>
       <button data-preset="midnoflip">Midterm: day after, no flip</button>
@@ -132,6 +133,7 @@ const PRESETS = {
   midoct:  [['ac:s_p500', 'cycle_year', '==', 2], ['ac:s_p500', 'month', '==', 10]],
   midpre:  [['ac:s_p500', 'midterm_day', '==', -1]],
   midpost: [['ac:s_p500', 'midterm_day', '==', 1]],
+  fedpeak: [['ac:s_p500', 'fed_peak_day', '==', 0]],
   midflipR: [['ac:s_p500', 'midterm_day', '==', 1], ['ac:s_p500', 'midterm_flip', 'has', 1]],
   midflipD: [['ac:s_p500', 'midterm_day', '==', 1], ['ac:s_p500', 'midterm_flip', 'has', 2]],
   midnoflip: [['ac:s_p500', 'midterm_day', '==', 1], ['ac:s_p500', 'midterm_flip', 'has', 8]],

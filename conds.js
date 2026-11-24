@@ -13,12 +13,12 @@ const SERIES_GROUPS = [
   ['ff_industry', 'Ken French 49 industries, value-weighted (1926+)'],
   ['ff_industry_ew', 'Ken French 49 industries, equal-weighted (1926+)'],
   ['breadth', 'Breadth (% of members)'],
-  ['calendar', 'Calendar & elections'],
+  ['calendar', 'Calendar, elections & Fed'],
 ];
 /* Calendar criteria stand alone -- no series to pick. They are evaluated on the
    S&P 500's trading days (1928+), the longest equity calendar in the data. */
 const CAL_SERIES = 'ac:s_p500';
-const CAL_METRICS = ['cycle_year', 'month', 'election_day', 'midterm_day', 'pres_day', 'midterm_flip'];
+const CAL_METRICS = ['cycle_year', 'month', 'election_day', 'midterm_day', 'pres_day', 'midterm_flip', 'fed_peak_day'];
 /* breadth.UNIVERSES -- the breadth monitor's 15 series */
 const BREADTH_UNIVERSES = [
   ['SPX', 'S&P 500'], ['NDX', 'Nasdaq 100'], ['RTY', 'Russell 2000'], ['SPR', 'S&P 1500'],
@@ -90,6 +90,10 @@ const CAL = {
   election_day: ELECTION_PICK,
   midterm_day: ELECTION_PICK,
   pres_day: ELECTION_PICK,
+  /* engine.FED_PEAKS: last hike of each cycle, 1984-2023 (8 cycles) */
+  fed_peak_day: [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5].map(k => [k,
+    k === 0 ? 'Last-hike day' : k === -1 ? 'Day before (−1)' : k === 1 ? 'Day after (+1)'
+    : (k > 0 ? '+' : '−') + Math.abs(k) + ' sessions']),
   /* bit set (engine.midterm_flip_code), tested with "has": every bit of the pick present */
   midterm_flip: [[64, 'Any chamber flipped'], [1, 'Flipped D → R (any chamber)'],
                  [2, 'Flipped R → D (any chamber)'], [4, 'Both chambers flipped'],

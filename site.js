@@ -329,6 +329,26 @@ function midtermFlipCode(y) {
   return 64 | (ch.house ? 16 : 0) | (ch.senate ? 32 : 0) | (ks.length === 2 ? 4 : 0)
        | (vs.includes('R') ? 1 : 0) | (vs.includes('D') ? 2 : 0);
 }
+/* Fed funds cycle peaks (last hike) -- as engine.FED_PEAKS */
+const FED_PEAKS = ['1984-08-09', '1987-09-24', '1989-05-17', '1995-02-01', '2000-05-16',
+                   '2006-06-29', '2018-12-20', '2023-07-27'];
+const EVENT_SPAN = 10;
+/* sessions from each date: as engine.date_offset */
+function dateOffset(d, dates) {
+  const n = d.length, out = new Float64Array(n).fill(NaN);
+  if (!n) return out;
+  for (const ds of dates) {
+    const e = Date.parse(ds + 'T00:00:00Z') / DAY;
+    const pos = lowerBound(d, e);
+    if (pos === 0 || (pos === n && e > d[n - 1] + 7)) continue;
+    const open = pos < n && d[pos] === e;
+    for (let i = Math.max(pos - EVENT_SPAN, 0); i < Math.min(pos + EVENT_SPAN + 1, n); i++) {
+      const o = i - pos + (open || i < pos ? 0 : 1);
+      if (Math.abs(o) <= EVENT_SPAN) out[i] = o;
+    }
+  }
+  return out;
+}
 const mcache = new Map();
 function metricSeries(sid, metric) {
   const key = sid + '|' + metric;
@@ -339,6 +359,7 @@ function metricSeries(sid, metric) {
   else if (metric === 'cycle_year') out = Float64Array.from(s.d, d => yearOf(d) % 4);
   else if (metric === 'month') out = Float64Array.from(s.d, d => new Date(d * DAY).getUTCMonth() + 1);
   else if (metric === 'election_day') out = electionOffset(s.d);
+  else if (metric === 'fed_peak_day') out = dateOffset(s.d, FED_PEAKS);
   else if (metric === 'midterm_flip') out = Float64Array.from(s.d, d => midtermFlipCode(yearOf(d)));
   else if (metric === 'midterm_day' || metric === 'pres_day') {
     const cy = metric === 'midterm_day' ? 2 : 0;
@@ -372,7 +393,7 @@ function metricSeries(sid, metric) {
   mcache.set(key, out);
   return out;
 }
-const PCT = id => !id.startsWith('br_') && !['price', 'up_streak', 'down_streak', 'cycle_year', 'month', 'election_day', 'midterm_day', 'pres_day', 'midterm_flip'].includes(id);
+const PCT = id => !id.startsWith('br_') && !['price', 'up_streak', 'down_streak', 'cycle_year', 'month', 'election_day', 'midterm_day', 'pres_day', 'midterm_flip', 'fed_peak_day'].includes(id);
 function applyOp(x, op, val) {
   if (op === '==') return x === val;
   if (op === 'has') return ((Number.isNaN(x) ? 0 : x) & val) === val;
