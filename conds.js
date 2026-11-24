@@ -9,6 +9,7 @@
 const SERIES_GROUPS = [
   ['asset_class', 'Asset classes'], ['benchmark', 'Benchmark'],
   ['sector', 'GICS sectors (S&P 1500)'], ['industry', 'GICS industries (S&P 1500)'],
+  ['sub_industry', 'GICS sub-industries (S&P 1500, 1995+)'],
   ['ff_industry', 'Ken French 49 industries, value-weighted (1926+)'],
   ['ff_industry_ew', 'Ken French 49 industries, equal-weighted (1926+)'],
   ['breadth', 'Breadth (% of members)'],
@@ -49,12 +50,19 @@ function seriesOptionsFor(grp, sel) {
   const rows = grp === 'breadth' ? BREADTH_UNIVERSES.map(([c, l]) => ({id: 'br:' + c, name: l}))
     : grp === 'calendar' ? [{id: CAL_SERIES, name: 'S&P 500 trading days'}]
     : SERIES.filter(s => s.grp === grp);
+  if (grp === 'sub_industry') {            /* 153 names: one optgroup per sector */
+    const secs = [...new Set(rows.map(s => s.sector || ''))].sort();
+    return secs.map(sec => `<optgroup label="${sec}">${rows.filter(s => (s.sector || '') === sec)
+      .map(s => `<option value="${s.id}"${s.id === sel ? ' selected' : ''}>${s.name}</option>`).join('')}</optgroup>`).join('');
+  }
   return rows.map(s => `<option value="${s.id}"${s.id === sel ? ' selected' : ''}>${s.name}</option>`).join('');
 }
 /* full list in optgroups, for pages with a single series picker */
 function seriesOptions(sel) {
   return SERIES_GROUPS.filter(([g]) => kindOf(g) === 'price' && SERIES.some(s => s.grp === g))
-    .map(([g, l]) => `<optgroup label="${l}">${seriesOptionsFor(g, sel)}</optgroup>`).join('');
+    .map(([g, l]) => g === 'sub_industry'
+      ? seriesOptionsFor(g, sel).replace(/<optgroup label="/g, `<optgroup label="${l} — `)
+      : `<optgroup label="${l}">${seriesOptionsFor(g, sel)}</optgroup>`).join('');
 }
 function metricOptions(kind, sel) {
   const label = id => (METRICS.find(m => m.id === id) || {}).label || id;

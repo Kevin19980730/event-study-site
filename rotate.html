@@ -6,7 +6,7 @@
 <title>Rotation — what to own after the event</title>
 <link rel="stylesheet" href="app.css?v=7c4f10a138">
 <script src="cards.js?v=67b98b55ee"></script>
-<script src="conds.js?v=41b6a91d25"></script>
+<script src="conds.js?v=930690211a"></script>
 <style>
 /* .tabs lives in app.css -- only the results-table spacing is page-specific */
 #out .tabs{margin-bottom:12px}
@@ -219,8 +219,12 @@ $('#csv').onclick = async () => {
 };
 
 /* ---------- render ---------- */
-const GROUPS = [['industry', 'Industries'], ['sector', 'Sectors'],
+const GROUPS = [['industry', 'Industries'], ['sub_industry', 'Sub-industries'], ['sector', 'Sectors'],
                 ['asset_class', 'Asset classes'], ['ff_industry', 'FF 49 VW'], ['ff_industry_ew', 'FF 49 EW']];
+/* sub-industries are labelled with their parent industry, industries with their sector */
+const parentOf = id => (SERIES.find(s => s.id === id) || {}).industry;
+const subLabel = r => r.grp === 'industry' ? r.sector
+  : r.grp === 'sub_industry' ? [parentOf(r.id), r.sector].filter(Boolean).join(' · ') : null;
 const STATS = [['avg', 'Average return'], ['median', 'Median return'], ['win', 'Win rate']];
 
 function render() {
@@ -269,7 +273,7 @@ function render() {
       ${STATS.map(([key]) => cols.map(c => cell(r, key, c)).join('')).join('')}
     </tr>`;
 
-  const grouped = TAB === 'industry' && BY_SECTOR;
+  const grouped = (TAB === 'industry' || TAB === 'sub_industry') && BY_SECTOR;
   let body;
   if (grouped) {
     /* Each sector's own index leads its industries, so an industry can be read
@@ -292,15 +296,16 @@ function render() {
     body = order.map(sec => {
       const head = sectorRow.get(sec);
       const kids = buckets.get(sec)
-        .map((r, i) => line(r, i + 1, condIds.has(r.id) ? 'self' : '')).join('');
+        .map((r, i) => line(r, i + 1, condIds.has(r.id) ? 'self' : '',
+          r.grp === 'sub_industry' && parentOf(r.id)
+            ? `${r.name}<span class="sub">${parentOf(r.id)}</span>` : undefined)).join('');
       return (head ? line(head, '', 'secrow', sec + ' — sector') :
         `<tr class="secrow"><td class="rank"></td><td class="name">${sec}</td>
          <td colspan="${cols.length * 3 + 1}"></td></tr>`) + kids;
     }).join('');
   } else {
     body = rows.map((r, i) => line(r, i + 1, condIds.has(r.id) ? 'self' : '',
-      r.grp === 'industry' && r.sector
-        ? `${r.name}<span class="sub">${r.sector}</span>` : undefined)).join('');
+      subLabel(r) ? `${r.name}<span class="sub">${subLabel(r)}</span>` : undefined)).join('');
   }
 
   const sortOpts = cols.map(c =>
@@ -318,7 +323,7 @@ function render() {
         ${GROUPS.map(([g, lbl]) => `<button data-tab="${g}" class="${g === TAB ? 'on' : ''}">${lbl} (${
           j.rows.filter(r => r.grp === g).length})</button>`).join('')}
         <span class="spacer"></span>
-        ${TAB === 'industry' ? `<label class="opt"><input type="checkbox" id="bysec"
+        ${TAB === 'industry' || TAB === 'sub_industry' ? `<label class="opt"><input type="checkbox" id="bysec"
           ${BY_SECTOR ? 'checked' : ''} style="width:auto"> group by sector</label>` : ''}
         <label class="opt">Min N <input type="number" id="minn" value="${MIN_N}" min="0"
           step="1" style="width:64px"></label>
@@ -412,8 +417,8 @@ function renderPeriod() {
   const spx = j.rows.find(r => r.id === 'ac:s_p500');
   const body = rows.map((r, i) => `<tr class="${r.id === 'ac:s_p500' ? 'self' : ''}">
       <td class="rank">${i + 1}</td>
-      <td class="name" title="${r.ticker || ''}">${r.name}${r.grp === 'industry' && r.sector ?
-        `<span class="sub">${r.sector}</span>` : ''}</td>
+      <td class="name" title="${r.ticker || ''}">${r.name}${subLabel(r) ?
+        `<span class="sub">${subLabel(r)}</span>` : ''}</td>
       <td class="muted">${r.from}</td><td class="muted">${r.to}</td>
       ${cols.map(c => `<td class="${c === 'First 3M' ? 'gap' : ''}${c === PSORT ? ' sortcol' : ''}" style="background:${
         NO_HEAT.has(c) ? '' : heat(r.stats[c], scale[c])}">${pct(r.stats[c])}</td>`).join('')}

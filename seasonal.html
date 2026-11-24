@@ -106,11 +106,12 @@ const maxAbs = (vals, centre = 0) =>
 
 function seriesOptions(sel) {
   const groups = {industry: 'GICS industries', sector: 'GICS sectors',
+                  sub_industry: 'GICS sub-industries (1995+)',
                   asset_class: 'Asset classes', benchmark: 'Benchmark',
                   ff_industry: 'Ken French 49 industries, value-weighted (total return, 1926+)',
                   ff_industry_ew: 'Ken French 49 industries, equal-weighted (total return, 1926+)'};
   let html = '';
-  for (const g of ['asset_class', 'sector', 'industry', 'benchmark', 'ff_industry', 'ff_industry_ew']) {
+  for (const g of ['asset_class', 'sector', 'industry', 'sub_industry', 'benchmark', 'ff_industry', 'ff_industry_ew']) {
     const rows = SERIES.filter(s => s.grp === g);
     if (!rows.length) continue;
     html += `<optgroup label="${groups[g]}">`;
