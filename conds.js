@@ -18,7 +18,7 @@ const SERIES_GROUPS = [
 /* Calendar criteria stand alone -- no series to pick. They are evaluated on the
    S&P 500's trading days (1928+), the longest equity calendar in the data. */
 const CAL_SERIES = 'ac:s_p500';
-const CAL_METRICS = ['cycle_year', 'month', 'election_day', 'midterm_day', 'pres_day', 'midterm_flip', 'fed_peak_day'];
+const CAL_METRICS = ['cycle_year', 'month', 'election_day', 'midterm_day', 'pres_day', 'midterm_flip', 'fed_peak_day', 'fed_cut_day'];
 /* breadth.UNIVERSES -- the breadth monitor's 15 series */
 const BREADTH_UNIVERSES = [
   ['SPX', 'S&P 500'], ['NDX', 'Nasdaq 100'], ['RTY', 'Russell 2000'], ['SPR', 'S&P 1500'],
@@ -93,6 +93,10 @@ const CAL = {
   /* engine.FED_PEAKS: last hike of each cycle, 1984-2023 (9 peaks) */
   fed_peak_day: [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5].map(k => [k,
     k === 0 ? 'Last-hike day' : k === -1 ? 'Day before (−1)' : k === 1 ? 'Day after (+1)'
+    : (k > 0 ? '+' : '−') + Math.abs(k) + ' sessions']),
+  /* engine.FED_CUTS: first cut after each of those peaks */
+  fed_cut_day: [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5].map(k => [k,
+    k === 0 ? 'First-cut day' : k === -1 ? 'Day before (−1)' : k === 1 ? 'Day after (+1)'
     : (k > 0 ? '+' : '−') + Math.abs(k) + ' sessions']),
   /* bit set (engine.midterm_flip_code), tested with "has": every bit of the pick present */
   midterm_flip: [[64, 'Any chamber flipped'], [1, 'Flipped D → R (any chamber)'],

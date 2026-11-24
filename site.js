@@ -332,6 +332,9 @@ function midtermFlipCode(y) {
 /* Fed funds cycle peaks (last hike) -- as engine.FED_PEAKS */
 const FED_PEAKS = ['1984-08-09', '1987-09-04', '1989-02-24', '1995-02-01', '1997-03-25', '2000-05-16',
                    '2006-06-29', '2018-12-20', '2023-07-27'];
+/* first cut after each peak -- as engine.FED_CUTS */
+const FED_CUTS = ['1984-09-20', '1987-11-04', '1989-06-06', '1995-07-06', '1998-09-29',
+                  '2001-01-03', '2007-09-18', '2019-08-01', '2024-09-19'];
 const EVENT_SPAN = 10;
 /* sessions from each date: as engine.date_offset */
 function dateOffset(d, dates) {
@@ -360,6 +363,7 @@ function metricSeries(sid, metric) {
   else if (metric === 'month') out = Float64Array.from(s.d, d => new Date(d * DAY).getUTCMonth() + 1);
   else if (metric === 'election_day') out = electionOffset(s.d);
   else if (metric === 'fed_peak_day') out = dateOffset(s.d, FED_PEAKS);
+  else if (metric === 'fed_cut_day') out = dateOffset(s.d, FED_CUTS);
   else if (metric === 'midterm_flip') out = Float64Array.from(s.d, d => midtermFlipCode(yearOf(d)));
   else if (metric === 'midterm_day' || metric === 'pres_day') {
     const cy = metric === 'midterm_day' ? 2 : 0;
@@ -393,7 +397,7 @@ function metricSeries(sid, metric) {
   mcache.set(key, out);
   return out;
 }
-const PCT = id => !id.startsWith('br_') && !['price', 'up_streak', 'down_streak', 'cycle_year', 'month', 'election_day', 'midterm_day', 'pres_day', 'midterm_flip', 'fed_peak_day'].includes(id);
+const PCT = id => !id.startsWith('br_') && !['price', 'up_streak', 'down_streak', 'cycle_year', 'month', 'election_day', 'midterm_day', 'pres_day', 'midterm_flip', 'fed_peak_day', 'fed_cut_day'].includes(id);
 function applyOp(x, op, val) {
   if (op === '==') return x === val;
   if (op === 'has') return ((Number.isNaN(x) ? 0 : x) & val) === val;

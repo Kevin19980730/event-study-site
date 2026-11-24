@@ -6,8 +6,8 @@
 <title>Event Study — GICS industries, sectors & asset classes</title>
 <link rel="stylesheet" href="app.css?v=7c4f10a138">
 <script src="cards.js?v=67b98b55ee"></script>
-<script src="conds.js?v=67b8a9c8e1"></script>
-<script src="site.js?v=eb42d03ac4"></script>
+<script src="conds.js?v=e490a7860b"></script>
+<script src="site.js?v=70771fcc90"></script>
 <style>#btn-update{display:none}</style>
 </head>
 <body>
@@ -68,6 +68,7 @@
       <button data-preset="midpre">Midterm: day before election</button>
       <button data-preset="midpost">Midterm: day after election</button>
       <button data-preset="fedpeak">Fed funds peak: last-hike day</button>
+      <button data-preset="fedcut">Fed: first rate cut</button>
       <button data-preset="midflipR">Midterm: day after, Congress flipped D → R</button>
       <button data-preset="midflipD">Midterm: day after, Congress flipped R → D</button>
       <button data-preset="midnoflip">Midterm: day after, no flip</button>
@@ -134,6 +135,7 @@ const PRESETS = {
   midpre:  [['ac:s_p500', 'midterm_day', '==', -1]],
   midpost: [['ac:s_p500', 'midterm_day', '==', 1]],
   fedpeak: [['ac:s_p500', 'fed_peak_day', '==', 0]],
+  fedcut: [['ac:s_p500', 'fed_cut_day', '==', 0]],
   midflipR: [['ac:s_p500', 'midterm_day', '==', 1], ['ac:s_p500', 'midterm_flip', 'has', 1]],
   midflipD: [['ac:s_p500', 'midterm_day', '==', 1], ['ac:s_p500', 'midterm_flip', 'has', 2]],
   midnoflip: [['ac:s_p500', 'midterm_day', '==', 1], ['ac:s_p500', 'midterm_flip', 'has', 8]],
