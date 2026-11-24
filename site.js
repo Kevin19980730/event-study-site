@@ -330,7 +330,7 @@ function midtermFlipCode(y) {
        | (vs.includes('R') ? 1 : 0) | (vs.includes('D') ? 2 : 0);
 }
 /* Fed funds cycle peaks (last hike) -- as engine.FED_PEAKS */
-const FED_PEAKS = ['1984-08-09', '1987-09-24', '1989-05-17', '1995-02-01', '2000-05-16',
+const FED_PEAKS = ['1984-08-09', '1987-09-24', '1989-05-17', '1995-02-01', '1997-03-25', '2000-05-16',
                    '2006-06-29', '2018-12-20', '2023-07-27'];
 const EVENT_SPAN = 10;
 /* sessions from each date: as engine.date_offset */

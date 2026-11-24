@@ -90,7 +90,7 @@ const CAL = {
   election_day: ELECTION_PICK,
   midterm_day: ELECTION_PICK,
   pres_day: ELECTION_PICK,
-  /* engine.FED_PEAKS: last hike of each cycle, 1984-2023 (8 cycles) */
+  /* engine.FED_PEAKS: last hike of each cycle, 1984-2023 (9 peaks) */
   fed_peak_day: [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5].map(k => [k,
     k === 0 ? 'Last-hike day' : k === -1 ? 'Day before (−1)' : k === 1 ? 'Day after (+1)'
     : (k > 0 ? '+' : '−') + Math.abs(k) + ' sessions']),
