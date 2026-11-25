@@ -109,6 +109,16 @@ function heat(v, scale) {             // positive = rich -> red, negative = chea
   if (!t) return '';
   return `color-mix(in srgb, var(${t > 0 ? '--neg' : '--pos'}) ${(Math.abs(t) * CAP).toFixed(1)}%, var(--mid))`;
 }
+/* which index a series is: Bloomberg ticker + plain-English family */
+const LEVEL = {sector: 'sector', industry: 'industry', sub_industry: 'sub-industry'};
+function idxFamily(s) {
+  const t = s.ticker || '';
+  const fam = /^S15/.test(t) ? 'S&P Composite 1500' : /^S5/.test(t) ? 'S&P 500' : /^S4/.test(t) ? 'S&P MidCap 400'
+            : /^S6/.test(t) ? 'S&P SmallCap 600' : '';
+  return fam && LEVEL[s.grp] ? `${fam} GICS ${LEVEL[s.grp]} index` : (fam || 'index');
+}
+const idxTitle = s => `${s.ticker || ''} — ${idxFamily(s)}${s.grp === 'sub_industry' && s.industry ? ` (industry: ${s.industry})` : ''}`;
+let YR = {lo: null, hi: null};          // manual chart Y range; null = auto
 const f1 = v => v == null ? '' : v.toFixed(1);
 const f2 = v => v == null ? '' : v.toFixed(2);
 
@@ -161,7 +171,7 @@ function compute() {
 }
 
 const COLS = [
-  ['name', 'Series', r => r.s.name], ['grp', 'Group', r => r.s.grp],
+  ['name', 'Series', r => r.s.name], ['ticker', 'Index', r => r.s.ticker || ''], ['grp', 'Group', r => r.s.grp],
   ['cur', 'Current', r => r.st.cur], ['mean', 'Mean', r => r.st.mean], ['sd', 'Std dev', r => r.st.sd],
   ['z', 'Z-score', r => r.st.z], ['pct', 'Percentile', r => r.st.pct],
   ['min', 'Min', r => r.st.min], ['max', 'Max', r => r.st.max], ['n', 'Days', r => r.st.n],
@@ -180,7 +190,8 @@ function render() {
   const body = ROWS.map(r => {
     const st = r.st, stale = st.lastDay - st.curDay > 35;
     return `<tr class="pick${r.s.id === SEL ? ' sel' : ''}" data-id="${r.s.id}">
-      <td class="lbl" title="${r.s.ticker || ''}">${r.s.name}</td>
+      <td class="lbl" title="${idxTitle(r.s)}">${r.s.name}</td>
+      <td class="grp" title="${idxTitle(r.s)}" style="white-space:nowrap">${(r.s.ticker || '').replace(/ Index$/, '')}</td>
       <td class="grp">${GROUPS[r.s.grp] || r.s.grp}</td>
       <td class="${stale ? 'stale' : ''}" ${stale ? `title="last value ${isoDay(st.curDay)}"` : ''}>${f1(st.cur)}</td>
       <td>${f1(st.mean)}</td><td>${f1(st.sd)}</td>
@@ -189,17 +200,20 @@ function render() {
       <td>${f1(st.min)}</td><td>${f1(st.max)}</td><td>${st.n}</td></tr>`;
   }).join('');
   $('#tab').innerHTML = `<thead><tr class="hdr">${head}</tr></thead><tbody>${body ||
-    '<tr><td class="lbl muted" colspan="10">No series match.</td></tr>'}</tbody>`;
+    '<tr><td class="lbl muted" colspan="11">No series match.</td></tr>'}</tbody>`;
   const zs = ROWS.map(r => r.st.z).filter(z => z != null);
   const rich = zs.filter(z => z >= 1).length, cheap = zs.filter(z => z <= -1).length;
   $('#tab-legend').innerHTML = `<span>${ROWS.length} series</span><span>z ≥ +1: <b>${rich}</b></span>
     <span>z ≤ −1: <b>${cheap}</b></span><span>median z ${zs.length ? f2(zs.sort((a, b) => a - b)[zs.length >> 1]) : '—'}</span>`;
   document.querySelectorAll('#tab th.sort').forEach(th => th.onclick = () => {
     const k = th.dataset.k;
-    SORT = SORT.key === k ? {key: k, dir: -SORT.dir} : {key: k, dir: k === 'name' || k === 'grp' ? 1 : -1};
+    SORT = SORT.key === k ? {key: k, dir: -SORT.dir} : {key: k, dir: ['name', 'grp', 'ticker'].includes(k) ? 1 : -1};
     render();
   });
-  document.querySelectorAll('#tab tr.pick').forEach(tr => tr.onclick = () => { SEL = tr.dataset.id; save(); render(); detail(); });
+  document.querySelectorAll('#tab tr.pick').forEach(tr => tr.onclick = () => {
+    if (tr.dataset.id !== SEL) YR = {lo: null, hi: null};
+    SEL = tr.dataset.id; save(); render(); detail();
+  });
 }
 
 /* ---------- detail: one series, every metric + history chart ---------- */
@@ -210,7 +224,15 @@ function detail() {
   const rows = VAL.metrics.map(m => ({m, st: stats(SEL, m.id, years)})).filter(r => r.st);
   const st = stats(SEL, metric, years);
   box.innerHTML = `
-    <h2>${s.name} <span class="small">${s.ticker || ''} · ${$('#win').selectedOptions[0].textContent}</span></h2>
+    <h2>${s.name} <span class="small">${$('#win').selectedOptions[0].textContent}</span></h2>
+    <div class="hint" style="margin:2px 0 8px"><b>${s.ticker || ''}</b> · ${idxFamily(s)}${
+      s.grp === 'sub_industry' && s.industry ? ` · industry: ${s.industry}` : ''}${s.sector && s.grp !== 'sector' ? ` · sector: ${s.sector}` : ''}</div>
+    <div class="cond" style="margin:0 0 6px;gap:6px">
+      <label class="opt">Y axis <input type="number" id="ymin" step="any" placeholder="auto" style="width:72px"></label>
+      <label class="opt">to <input type="number" id="ymax" step="any" placeholder="auto" style="width:72px"></label>
+      <button id="ysig" title="mean ± 3 standard deviations">±3σ</button>
+      <button id="yauto">Auto</button>
+    </div>
     <svg id="hist"></svg>
     <div class="legend">
       <span><span class="key" style="border-color:var(--accent)"></span>${$('#metric').selectedOptions[0].textContent}</span>
@@ -226,6 +248,19 @@ function detail() {
         <td style="background:${heat(st.pct == null ? null : st.pct - .5, .5)}">${st.pct == null ? '' : (st.pct * 100).toFixed(0) + '%'}</td></tr>`).join('')}
       </tbody></table></div>
     <div class="hint">${st && st.first != null ? `History from ${isoDay(st.first)} to ${isoDay(st.lastDay)}, ${st.n} trading days.` : ''}</div>`;
+  const yin = () => {
+    const a = $('#ymin').value.trim(), b = $('#ymax').value.trim();
+    YR = {lo: a === '' ? null : +a, hi: b === '' ? null : +b};
+    drawHist(SEL, $('#metric').value, +$('#win').value);
+  };
+  $('#ymin').value = YR.lo ?? ''; $('#ymax').value = YR.hi ?? '';
+  $('#ymin').oninput = $('#ymax').oninput = yin;
+  $('#yauto').onclick = () => { $('#ymin').value = $('#ymax').value = ''; yin(); };
+  $('#ysig').onclick = () => {
+    const s3 = stats(SEL, $('#metric').value, +$('#win').value);
+    if (!s3 || !s3.sd) return;
+    $('#ymin').value = +(s3.mean - 3 * s3.sd).toFixed(2); $('#ymax').value = +(s3.mean + 3 * s3.sd).toFixed(2); yin();
+  };
   drawHist(SEL, metric, years);
 }
 
@@ -241,6 +276,9 @@ function drawHist(sid, metric, years) {
   const bands = st.sd ? [st.mean - 2 * st.sd, st.mean + 2 * st.sd] : [];
   let lo = Math.min(...vals, ...bands), hi = Math.max(...vals, ...bands);
   const pad = (hi - lo) * .05 || 1; lo -= pad; hi += pad;
+  // manual range from the Y-axis boxes (either end may stay auto); ignored if it is inverted
+  const mlo = Number.isFinite(YR.lo) ? YR.lo : lo, mhi = Number.isFinite(YR.hi) ? YR.hi : hi;
+  if (mhi > mlo) { lo = mlo; hi = mhi; }
   const x0 = pts[0][0], x1 = pts[pts.length - 1][0];
   const X = d => m.l + (d - x0) / ((x1 - x0) || 1) * iw;
   const Y = v => m.t + ih - (v - lo) / (hi - lo) * ih;
@@ -260,15 +298,18 @@ function drawHist(sid, metric, years) {
   const band = (a, b, op) => st.sd ? `<rect x="${m.l}" width="${iw}" y="${Y(b).toFixed(1)}" height="${(Y(a) - Y(b)).toFixed(1)}"
       fill="color-mix(in srgb,var(--text-muted) ${op}%,transparent)"/>` : '';
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const curIn = st.cur >= lo && st.cur <= hi;
   svg.innerHTML =
-    band(st.mean - 2 * st.sd, st.mean + 2 * st.sd, 10) + band(st.mean - st.sd, st.mean + st.sd, 22) +
+    `<defs><clipPath id="hclip"><rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}"/></clipPath></defs><g clip-path="url(#hclip)">` +
+    band(st.mean - 2 * st.sd, st.mean + 2 * st.sd, 10) + band(st.mean - st.sd, st.mean + st.sd, 22) + '</g>' +
     yt.map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--border)"/>
       <text x="${m.l - 6}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--text-muted)">${+v.toFixed(2)}</text>`).join('') +
     xt.map(([y, d]) => `<text x="${X(d).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--text-muted)">${y}</text>`).join('') +
+    '<g clip-path="url(#hclip)">' +
     (st.sd ? `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(st.mean).toFixed(1)}" y2="${Y(st.mean).toFixed(1)}"
       stroke="var(--text-secondary)" stroke-dasharray="5 4"/>` : '') +
-    `<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round"/>` +
-    `<circle cx="${X(st.curDay).toFixed(1)}" cy="${Y(st.cur).toFixed(1)}" r="3.5" fill="var(--accent)"/>` +
+    `<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round"/></g>` +
+    (curIn ? `<circle cx="${X(st.curDay).toFixed(1)}" cy="${Y(st.cur).toFixed(1)}" r="3.5" fill="var(--accent)"/>` : '') +
     `<line id="hcross" y1="${m.t}" y2="${m.t + ih}" stroke="var(--border-strong)" style="display:none"/>`;
   const tip = $('#tip'), cross = svg.querySelector('#hcross');
   svg.onmousemove = ev => {
@@ -291,7 +332,10 @@ function save() {
   try { localStorage.setItem('valuation.state', JSON.stringify({m: $('#metric').value, w: $('#win').value,
         g: $('#grp').value, sel: SEL})); } catch (e) {}
 }
-['#metric', '#win', '#grp'].forEach(id => $(id).onchange = () => { save(); compute(); detail(); });
+['#metric', '#win', '#grp'].forEach(id => $(id).onchange = () => {
+  if (id === '#metric') YR = {lo: null, hi: null};   // other metric = other scale
+  save(); compute(); detail();
+});
 $('#q').oninput = compute;
 $('#csv').onclick = () => {
   const esc = v => v == null ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v;
