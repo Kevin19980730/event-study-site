@@ -226,7 +226,7 @@ function detail() {
   box.innerHTML = `
     <h2>${s.name} <span class="small">${$('#win').selectedOptions[0].textContent}</span></h2>
     <div class="hint" style="margin:2px 0 8px"><b>${s.ticker || ''}</b> · ${idxFamily(s)}${
-      s.grp === 'sub_industry' && s.industry ? ` · industry: ${s.industry}` : ''}${s.sector && s.grp !== 'sector' ? ` · sector: ${s.sector}` : ''}</div>
+      s.grp === 'sub_industry' && s.industry ? ` · industry: ${s.industry}` : ''}${s.sector && (s.grp === 'industry' || s.grp === 'sub_industry') ? ` · sector: ${s.sector}` : ''}</div>
     <div class="cond" style="margin:0 0 6px;gap:6px">
       <label class="opt">Y axis <input type="number" id="ymin" step="any" placeholder="auto" style="width:72px"></label>
       <label class="opt">to <input type="number" id="ymax" step="any" placeholder="auto" style="width:72px"></label>
