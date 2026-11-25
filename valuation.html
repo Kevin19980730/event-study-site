@@ -246,12 +246,15 @@ function detail() {
       <span><span class="band" style="background:color-mix(in srgb,var(--text-muted) 22%,transparent)"></span>±1σ</span>
       <span><span class="band" style="background:color-mix(in srgb,var(--text-muted) 10%,transparent)"></span>±2σ</span>
     </div>
-    ${VAL.series[SEL].x && VAL.series[SEL].x.px && VAL.series[SEL].x.eps ? `
-    <h2 style="margin-top:14px">Forward EPS, price &amp; forward P/E <span class="small">${$('#win').selectedOptions[0].textContent}</span></h2>
+    ${VAL.series[SEL].x && VAL.series[SEL].x.px ? `
+    <h2 style="margin-top:14px">${{pe: 'Forward EPS, price &amp; ', pb: 'Book value, price &amp; ', pe_gaap: 'GAAP EPS, price &amp; '}[metric] || 'Price &amp; '}${
+      $('#metric').selectedOptions[0].textContent} <span class="small">${$('#win').selectedOptions[0].textContent}</span></h2>
     <div class="legend" id="trend-chg"></div>
-    <svg id="trend" style="width:100%;height:390px;display:block"></svg>
-    <div class="hint">Forward EPS = Bloomberg BEst EPS, blended next-12-month consensus. Forward P/E = price ÷ forward EPS
-      (blank while forward EPS ≤ 0). The three panels share the date axis.</div>` : ''}
+    <svg id="trend" style="width:100%;height:480px;display:block"></svg>
+    <div class="hint">Follows the Metric picker. Forward EPS = Bloomberg BEst EPS, blended next-12-month consensus;
+      book value / share = price ÷ P/B. EV multiples show price and the multiple only (the data has no EV or per-share
+      sales/EBITDA/EBIT). ▼ / ▲ mark major cycle peaks / troughs: a turn of at least 20% (12% for EPS / book value)
+      before the opposite move, fewer if a window would get more than 8; the latest, unfinished leg is not marked.</div>` : ''}
     <div class="scroll" style="margin-top:10px"><table>
       <thead><tr class="hdr"><th class="lbl">Metric</th><th>Current</th><th>Mean</th><th>Z</th><th>Pctile</th></tr></thead>
       <tbody>${rows.map(({m, st}) => `<tr class="${m.id === metric ? 'sel' : ''}">
@@ -280,19 +283,64 @@ function detail() {
 /* ---------- trend: forward EPS / price / forward P/E, stacked, shared date axis ---------- */
 function drawTrend(sid, years) {
   const svg = $('#trend'), h = hist(sid);
-  if (!svg || !h || !h.x.px || !h.x.eps) return;
+  if (!svg || !h || !h.x.px) return;
   const lastDay = h.d[h.d.length - 1], from = years ? lastDay - Math.round(years * 365.25) : -Infinity;
   const idx = [];
   for (let i = 0; i < h.d.length; i++) if (h.d[i] >= from) idx.push(i);
   if (idx.length < 2) return;
-  const pe = h.m.pe || [];
+  // panels follow the Metric picker: [fundamental,] price, multiple
+  const M = $('#metric').value, mv = h.m[M] || [], px = h.x.px;
+  const mlbl = (VAL.metrics.find(x => x.id === M) || {}).label || M;
+  const implied = () => px.map((p, i) => p != null && mv[i] > 0 ? p / mv[i] : null);   // price ÷ multiple
+  const fund = M === 'pe' && h.x.eps ? {lbl: 'Forward EPS', v: h.x.eps}
+             : M === 'pb' ? {lbl: 'Book value / share', v: implied()}
+             : M === 'pe_gaap' ? {lbl: 'GAAP EPS', v: implied()} : null;
   const panels = [
-    {k: 'eps', lbl: 'Forward EPS', v: h.x.eps, col: 'var(--pos)', log: true},
-    {k: 'px', lbl: 'Price', v: h.x.px, col: 'var(--accent)', log: true},
-    {k: 'pe', lbl: 'Forward P/E', v: pe, col: 'var(--neg)'},
+    ...(fund ? [{k: 'fund', lbl: fund.lbl, v: fund.v, col: 'var(--pos)', log: true, swing: .12}] : []),
+    {k: 'px', lbl: 'Price', v: px, col: 'var(--accent)', log: true, swing: .20},
+    {k: 'mult', lbl: mlbl, v: mv, col: 'var(--neg)', swing: .20},
   ];
-  const W = svg.clientWidth || 600, H = 390, m = {t: 8, r: 14, b: 22, l: 52}, gap = 14;
-  const iw = W - m.l - m.r, ph = (H - m.t - m.b - gap * 2) / 3;
+  const NP = panels.length;
+  /* major cycle peaks/troughs: zigzag -- a peak is confirmed once the series falls `swing` from it,
+     a trough once it rises `swing` (in log terms, so a 20% fall and a 25% rise are the same move).
+     Series with values <= 0 use an absolute move of `swing` x the window's range. The swing is
+     raised until there are at most MAXPIV pivots; the last, unconfirmed leg is not labelled. */
+  const MAXPIV = 8;
+  const pivots = (v, swing) => {
+    const pts = idx.filter(i => v[i] != null);
+    if (pts.length < 3) return [];
+    const pos = pts.every(i => v[i] > 0);
+    const t = i => pos ? Math.log(v[i]) : v[i];
+    const span = pos ? 0 : Math.max(...pts.map(t)) - Math.min(...pts.map(t));
+    let th = pos ? -Math.log(1 - swing) : swing * span, out;
+    for (let tries = 0; tries < 12; tries++, th *= 1.25) {
+      out = [];
+      let dir = 0, hiI = pts[0], loI = pts[0], ext = pts[0];
+      for (const i of pts) {
+        if (dir === 0) {
+          if (t(i) > t(hiI)) hiI = i;
+          if (t(i) < t(loI)) loI = i;
+          if (t(i) - t(loI) >= th) { out.push({i: loI, top: false}); dir = 1; ext = i; }
+          else if (t(hiI) - t(i) >= th) { out.push({i: hiI, top: true}); dir = -1; ext = i; }
+        } else if (dir === 1) {
+          if (t(i) > t(ext)) ext = i;
+          else if (t(ext) - t(i) >= th) { out.push({i: ext, top: true}); dir = -1; ext = i; }
+        } else {
+          if (t(i) < t(ext)) ext = i;
+          else if (t(i) - t(ext) >= th) { out.push({i: ext, top: false}); dir = 1; ext = i; }
+        }
+      }
+      out = out.filter(q => h.d[q.i] - x0 > 20);      // a window-start value is not a cycle turn
+      if (out.length <= MAXPIV) break;
+    }
+    return out;
+  };
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monYr = d => { const t = new Date(d * DAY); return MON[t.getUTCMonth()] + '-' + String(t.getUTCFullYear()).slice(2); };
+  const H = NP === 3 ? 480 : 340;
+  svg.style.height = H + 'px';
+  const W = svg.clientWidth || 600, m = {t: 8, r: 14, b: 22, l: 52}, gap = 14;
+  const iw = W - m.l - m.r, ph = (H - m.t - m.b - gap * (NP - 1)) / NP;
   const x0 = h.d[idx[0]], x1 = h.d[idx[idx.length - 1]];
   const X = d => m.l + (d - x0) / ((x1 - x0) || 1) * iw;
   const ticks = (lo, hi) => {
@@ -339,11 +387,37 @@ function drawTrend(sid, years) {
     html += `<text x="${m.l + 6}" y="${top + 12}" font-size="11" font-weight="600" fill="${p.col}">${p.lbl}${p.log ? `<tspan font-weight="400" fill="var(--text-muted)"> · ${log ? 'log' : 'linear (values ≤ 0)'}</tspan>` : ''}</text>
       <path d="${path}" fill="none" stroke="${p.col}" stroke-width="1.5" stroke-linejoin="round"/>
       <circle class="tdot" data-j="${j}" r="3" fill="${p.col}" style="display:none"/>`;
+    // label the major cycle peaks (▼, above the point) and troughs (▲, below), without overlaps:
+    // each label tries rows moving away from its point, then the other side; the panel title and
+    // labels already placed are taken. No free row -> circle only (its value shows on hover).
+    const taken = [{x0: m.l, x1: m.l + 10 + 6.2 * (p.lbl.length + (p.log ? 6 : 0)), y0: top, y1: top + 14}];
+    const hit = r => taken.some(t => r.x0 < t.x1 && r.x1 > t.x0 && r.y0 < t.y1 && r.y1 > t.y0);
+    for (const q of pivots(p.v, p.swing)) {
+      const cx = X(h.d[q.i]), cy = Y(p.v[q.i]);
+      const txt = `${q.top ? '▼' : '▲'} ${fmt(+p.v[q.i].toPrecision(4))} ${monYr(h.d[q.i])}`, w = txt.length * 5.5;
+      const x0r = Math.min(Math.max(cx - w / 2, m.l), W - m.r - w);
+      const dirs = q.top ? [-1, 1] : [1, -1];
+      let place = null;
+      for (const s of dirs) {
+        for (let k = 0; k < 4 && !place; k++) {
+          const base = s < 0 ? cy - 5 - k * 11 : cy + 12 + k * 11;          // text baseline
+          const r = {x0: x0r - 1, x1: x0r + w + 1, y0: base - 9, y1: base + 2};
+          if (r.y0 < top || r.y1 > top + ph + 2) break;
+          if (!hit(r)) place = {r, base};
+        }
+        if (place) break;
+      }
+      html += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="2.5" fill="var(--surface-1)" stroke="${p.col}" stroke-width="1.3"><title>${txt}</title></circle>`;
+      if (!place) continue;
+      taken.push(place.r);
+      html += `<text x="${x0r.toFixed(1)}" y="${place.base.toFixed(1)}" font-size="9" fill="var(--text-secondary)"
+          paint-order="stroke" stroke="var(--surface-1)" stroke-width="3">${txt}</text>`;
+    }
     // change over the window: first vs last non-empty value
     let a = null, b = null;
     for (const i of idx) if (p.v[i] != null) { if (a == null) a = p.v[i]; b = p.v[i]; }
     chg.push(`<span><span class="key" style="border-color:${p.col}"></span>${p.lbl} <b>${fmt(b)}</b>${
-      p.k === 'pe' ? ` (${(b - a >= 0 ? '+' : '') + (b - a).toFixed(1)} pts)` : a > 0 ? ` (${(b / a - 1 >= 0 ? '+' : '') + ((b / a - 1) * 100).toFixed(1)}%)` : ''}</span>`);
+      p.k === 'mult' ? ` (${(b - a >= 0 ? '+' : '') + (b - a).toFixed(1)} pts)` : a > 0 ? ` (${(b / a - 1 >= 0 ? '+' : '') + ((b / a - 1) * 100).toFixed(1)}%)` : ''}</span>`);
   });
   const y0 = new Date(x0 * DAY).getUTCFullYear(), y1 = new Date(x1 * DAY).getUTCFullYear(), ys = Math.max(1, Math.ceil((y1 - y0) / 8));
   for (let y = y0 + 1; y <= y1; y += ys) { const d = Date.UTC(y, 0, 1) / DAY;
