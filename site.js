@@ -47,18 +47,20 @@ async function inflate(bytes) {
 
 /* valuation.bin (Valuation page only): same envelope as data.bin, fetched on first use.
    An encrypted build reuses the key the gate already derived. */
-let RAWKEY = null, VALUATION = null;
-async function loadValuation() {
-  if (VALUATION) return VALUATION;
-  const r = await realFetch('valuation.bin', {cache: 'no-cache'});
-  if (!r.ok) return {error: 'valuation.bin: HTTP ' + r.status};
+let RAWKEY = null;
+const SIDE = {};                       // valuation.bin, internals.bin (Internals page only)
+async function loadSide(file) {
+  if (SIDE[file]) return SIDE[file];
+  const r = await realFetch(file, {cache: 'no-cache'});
+  if (!r.ok) return {error: file + ': HTTP ' + r.status};
   const buf = new Uint8Array(await r.arrayBuffer());
   const magic = String.fromCharCode(...buf.slice(0, 4));
-  if (magic === 'ESD0') return VALUATION = await inflate(buf.slice(4));
-  if (magic !== 'ESD1' || !RAWKEY) return {error: 'valuation data is locked'};
+  if (magic === 'ESD0') return SIDE[file] = await inflate(buf.slice(4));
+  if (magic !== 'ESD1' || !RAWKEY) return {error: file + ' is locked'};
   const dv = new DataView(buf.buffer);
-  return VALUATION = await openWith(RAWKEY, {iv: buf.slice(20, 32), ct: buf.slice(36), iter: dv.getUint32(32)});
+  return SIDE[file] = await openWith(RAWKEY, {iv: buf.slice(20, 32), ct: buf.slice(36), iter: dv.getUint32(32)});
 }
+const loadValuation = () => loadSide('valuation.bin');
 
 async function openWith(rawKey, blob) {
   RAWKEY = rawKey;
@@ -1050,6 +1052,7 @@ window.fetch = async function (input, init) {
       case '/api/seasonal': return json(seasonalJSON(body));
       case '/api/seasonal.csv': return new Response(seasonalCSV(body), {headers: {'Content-Type': 'text/csv'}});
       case '/api/valuation': return json(await loadValuation());
+      case '/api/internals': return json(await loadSide('internals.bin'));
       case '/api/update': return json({status: 'unavailable', error: 'read-only website'}, 403);
       default: return json({error: 'not found'}, 404);
     }

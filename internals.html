@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Internals — index breadth vs its own history</title>
+<link rel="stylesheet" href="app.css?v=7c4f10a138">
+<style>
+td.lbl,th.lbl{text-align:left;position:sticky;left:0;background:var(--surface-1);
+  z-index:1;border-right:1px solid var(--border)}
+th.lbl{background:var(--surface-2);z-index:3}
+thead tr.hdr th{top:0}
+th.sort{cursor:pointer;user-select:none;white-space:nowrap}
+th.sort.on{color:var(--accent)}
+td.grp{text-align:left;color:var(--text-muted);font-size:11px}
+tbody tr.pick{cursor:pointer}
+tbody tr.pick:hover td{background:var(--surface-2)}
+tbody tr.sel td{box-shadow:inset 0 1px 0 var(--accent),inset 0 -1px 0 var(--accent)}
+td.stale{color:var(--text-muted)}
+#chart{width:100%;display:block}
+.key{display:inline-block;width:18px;height:0;border-top:2px solid;vertical-align:3px;margin-right:5px}
+.small{font-size:11px;color:var(--text-muted);font-weight:400}
+.pair{display:grid;grid-template-columns:minmax(300px,2fr) minmax(300px,1fr);gap:14px}
+@media (max-width:900px){.pair{grid-template-columns:1fr}}
+.pair .card{margin-bottom:0}
+input[type=search]{min-width:180px}
+</style>
+<script src="site.js?v=e1c65186d8"></script>
+<style>#btn-update{display:none}</style>
+</head>
+<body>
+<header>
+  <h1>Internals</h1>
+  <nav class="tabs" style="margin:0">
+    <button onclick="location.href='./'">Event study</button>
+    <button onclick="location.href='rotate.html'">Rotation</button>
+    <button onclick="location.href='seasonal.html'">Seasonality</button>
+    <button onclick="location.href='valuation.html'">Valuation</button>
+    <button class="on">Internals</button>
+  </nav>
+  <span class="pill" id="p-data">loading…</span>
+  <span class="spacer"></span>
+  <button id="theme">◐</button>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Index internals (breadth) vs their own history</h2>
+    <div class="cond">
+      <label class="opt">Metric <select id="metric"></select></label>
+      <label class="opt">History
+        <select id="win">
+          <option value="0">full history</option>
+          <option value="20">last 20 years</option>
+          <option value="10" selected>last 10 years</option>
+          <option value="5">last 5 years</option>
+          <option value="3">last 3 years</option>
+        </select></label>
+      <label class="opt">Group
+        <select id="grp">
+          <option value="">all</option>
+          <option value="asset_class">asset classes</option>
+          <option value="sector">GICS sectors</option>
+          <option value="industry">GICS industries</option>
+          <option value="sub_industry">GICS sub-industries</option>
+        </select></label>
+      <input type="search" id="q" placeholder="filter by name">
+      <span class="spacer"></span>
+      <button id="csv">Export CSV</button>
+    </div>
+    <div class="hint">Daily breadth of each index's members from Bloomberg G 58 (single index internals), since
+      1990-01-31. <b>Z-score</b> = (current − mean) ÷ standard deviation over the chosen history;
+      <b>percentile</b> = share of days in that history at or below today's reading; <b>5D Δ</b> = change
+      in points over the last 5 trading days. Teal = strong breadth vs its own past, red = weak
+      (for new lows and RSI &lt; 30 a high reading counts as weak). Click a row for its charts.</div>
+  </div>
+
+  <div class="pair">
+    <div class="card">
+      <div class="scroll" style="max-height:78vh"><table id="tab"></table></div>
+      <div class="legend" id="tab-legend"></div>
+    </div>
+    <div class="card" id="detail"><div class="muted">Pick a row.</div></div>
+  </div>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let SERIES = [], DATA = null, MET = {}, ROWS = [], SORT = {key: 'z', dir: -1}, SEL = null;
+const GROUPS = {asset_class: 'Asset class', benchmark: 'Benchmark', sector: 'Sector',
+                industry: 'Industry', sub_industry: 'Sub-industry'};
+const DAY = 864e5;
+const isoDay = d => new Date(d * DAY).toISOString().slice(0, 10);
+const BEARISH = new Set(['lo52', 'rsi30']);          // a high reading is weak breadth
+const RANKABLE = ['ma200', 'ma50', 'ma20', 'hi52', 'lo52', 'rsi70', 'rsi30'];
+
+$('#theme').onclick = () => {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : cur === 'light' ? '' : 'dark';
+  if (next) document.documentElement.setAttribute('data-theme', next);
+  else document.documentElement.removeAttribute('data-theme');
+};
+
+const CAP = 60;
+function heat(v, scale, metric) {     // strong breadth -> teal, weak -> red
+  if (v == null || !scale) return '';
+  let t = Math.max(-1, Math.min(1, v / scale));
+  if (BEARISH.has(metric)) t = -t;
+  if (!t) return '';
+  return `color-mix(in srgb, var(${t > 0 ? '--pos' : '--neg'}) ${(Math.abs(t) * CAP).toFixed(1)}%, var(--mid))`;
+}
+const LEVEL = {sector: 'sector', industry: 'industry', sub_industry: 'sub-industry'};
+function idxFamily(s) {
+  const t = s.ticker || '';
+  const fam = /^S15/.test(t) ? 'S&P Composite 1500' : /^S5/.test(t) ? 'S&P 500' : /^S4/.test(t) ? 'S&P MidCap 400'
+            : /^S6/.test(t) ? 'S&P SmallCap 600' : '';
+  return fam && LEVEL[s.grp] ? `${fam} GICS ${LEVEL[s.grp]} index` : (fam || 'index');
+}
+const idxTitle = s => `${s.ticker || ''} — ${idxFamily(s)}${s.grp === 'sub_industry' && s.industry ? ` (industry: ${s.industry})` : ''}`;
+const f1 = v => v == null ? '' : v.toFixed(1);
+const f2 = v => v == null ? '' : v.toFixed(2);
+const fmt = v => v == null ? '—' : Math.abs(v) >= 1000 ? Math.round(v).toLocaleString() : +v.toFixed(2);
+
+/* decode {d0, dd, m:{metric:[int | null]}} once per series; each metric has its own scale */
+const CACHE = {};
+function hist(sid) {
+  if (CACHE[sid]) return CACHE[sid];
+  const s = DATA.series[sid];
+  if (!s) return null;
+  const n = s.dd.length, d = new Int32Array(n);
+  let day = s.d0;
+  for (let i = 0; i < n; i++) { day += s.dd[i]; d[i] = day; }
+  const m = {};
+  for (const [k, arr] of Object.entries(s.m)) {
+    const sc = (MET[k] && MET[k].scale) || 1;
+    let acc = 0;
+    m[k] = arr.map(v => v == null ? null : (DATA.delta ? (acc += v) : v) / sc);
+  }
+  return CACHE[sid] = {d, m};
+}
+
+function stats(sid, metric, years) {
+  const h = hist(sid);
+  if (!h || !h.m[metric]) return null;
+  const v = h.m[metric], d = h.d, lastDay = d[d.length - 1];
+  let ci = v.length - 1;
+  while (ci >= 0 && v[ci] == null) ci--;
+  if (ci < 0) return null;
+  let pi = ci - 1, k = 0;                       // 5 readings back
+  for (; pi >= 0; pi--) if (v[pi] != null && ++k === 5) break;
+  const chg5 = pi >= 0 ? v[ci] - v[pi] : null;
+  const cur = v[ci], from = years ? lastDay - Math.round(years * 365.25) : -Infinity;
+  const xs = [];
+  let first = null;
+  for (let i = 0; i < v.length; i++) if (d[i] >= from && v[i] != null) { xs.push(v[i]); if (first == null) first = d[i]; }
+  if (xs.length < 126) return {cur, chg5, curDay: d[ci], lastDay, n: xs.length, first};
+  const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+  const sd = Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / (xs.length - 1));
+  const below = xs.filter(x => x <= cur).length;
+  return {cur, chg5, curDay: d[ci], lastDay, n: xs.length, first, mean, sd,
+          z: sd ? (cur - mean) / sd : null, pct: below / xs.length,
+          min: Math.min(...xs), max: Math.max(...xs)};
+}
+
+function compute() {
+  const metric = $('#metric').value, years = +$('#win').value, g = $('#grp').value,
+        q = $('#q').value.trim().toLowerCase();
+  ROWS = SERIES.filter(s => DATA.series[s.id] && (!g || s.grp === g) &&
+                            (!q || s.name.toLowerCase().includes(q) || (s.ticker || '').toLowerCase().includes(q)))
+    .map(s => ({s, st: stats(s.id, metric, years)}))
+    .filter(r => r.st);
+  render();
+}
+
+const COLS = [
+  ['name', 'Series', r => r.s.name], ['ticker', 'Index', r => r.s.ticker || ''], ['grp', 'Group', r => r.s.grp],
+  ['cur', 'Current', r => r.st.cur], ['chg5', '5D Δ', r => r.st.chg5], ['mean', 'Mean', r => r.st.mean],
+  ['z', 'Z-score', r => r.st.z], ['pct', 'Percentile', r => r.st.pct],
+  ['min', 'Min', r => r.st.min], ['max', 'Max', r => r.st.max], ['n', 'Days', r => r.st.n],
+];
+function render() {
+  const metric = $('#metric').value;
+  const get = COLS.find(c => c[0] === SORT.key)[2];
+  ROWS.sort((a, b) => {
+    const x = get(a), y = get(b);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return (typeof x === 'string' ? x.localeCompare(y) : x - y) * SORT.dir;
+  });
+  const head = COLS.map(([k, lbl], i) => `<th class="sort${i === 0 ? ' lbl' : ''}${SORT.key === k ? ' on' : ''}" data-k="${k}">${
+    lbl}${SORT.key === k ? (SORT.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('');
+  const body = ROWS.map(r => {
+    const st = r.st, stale = st.lastDay - st.curDay > 10;
+    return `<tr class="pick${r.s.id === SEL ? ' sel' : ''}" data-id="${r.s.id}">
+      <td class="lbl" title="${idxTitle(r.s)}">${r.s.name}</td>
+      <td class="grp" title="${idxTitle(r.s)}" style="white-space:nowrap">${(r.s.ticker || '').replace(/ Index$/, '')}</td>
+      <td class="grp">${GROUPS[r.s.grp] || r.s.grp}</td>
+      <td class="${stale ? 'stale' : ''}" ${stale ? `title="last reading ${isoDay(st.curDay)}"` : ''}>${f1(st.cur)}</td>
+      <td>${st.chg5 == null ? '' : (st.chg5 > 0 ? '+' : '') + st.chg5.toFixed(1)}</td>
+      <td>${f1(st.mean)}</td>
+      <td style="background:${heat(st.z, 2.5, metric)}"><b>${f2(st.z)}</b></td>
+      <td style="background:${heat(st.pct == null ? null : st.pct - .5, .5, metric)}">${st.pct == null ? '' : (st.pct * 100).toFixed(0) + '%'}</td>
+      <td>${f1(st.min)}</td><td>${f1(st.max)}</td><td>${st.n}</td></tr>`;
+  }).join('');
+  $('#tab').innerHTML = `<thead><tr class="hdr">${head}</tr></thead><tbody>${body ||
+    '<tr><td class="lbl muted" colspan="11">No series match.</td></tr>'}</tbody>`;
+  const cs = ROWS.map(r => r.st.cur).filter(v => v != null).sort((a, b) => a - b);
+  const zs = ROWS.map(r => r.st.z).filter(z => z != null);
+  $('#tab-legend').innerHTML = `<span>${ROWS.length} series</span><span>median reading <b>${cs.length ? f1(cs[cs.length >> 1]) : '—'}</b></span>
+    <span>z ≥ +1: <b>${zs.filter(z => z >= 1).length}</b></span><span>z ≤ −1: <b>${zs.filter(z => z <= -1).length}</b></span>`;
+  document.querySelectorAll('#tab th.sort').forEach(th => th.onclick = () => {
+    const k = th.dataset.k;
+    SORT = SORT.key === k ? {key: k, dir: -SORT.dir} : {key: k, dir: ['name', 'grp', 'ticker'].includes(k) ? 1 : -1};
+    render();
+  });
+  document.querySelectorAll('#tab tr.pick').forEach(tr => tr.onclick = () => { SEL = tr.dataset.id; save(); render(); detail(); });
+}
+
+/* ---------- detail: stacked panels on one date axis ---------- */
+const PANELS = [
+  {lbl: 'Price', h: 1.2, lines: [['px', 'var(--accent)']]},
+  {lbl: '% above moving average', h: 1, lines: [['ma200', 'var(--accent)'], ['ma50', 'var(--pos)'], ['ma20', 'var(--text-muted)']], pct: true},
+  {lbl: '% at new 52-week highs / lows', h: .8, lines: [['hi52', 'var(--pos)'], ['lo52', 'var(--neg)']], pct: true},
+  {lbl: '% with 14D RSI > 70 / < 30', h: .8, lines: [['rsi70', 'var(--pos)'], ['rsi30', 'var(--neg)']], pct: true},
+  {lbl: 'Advance-decline accumulation', h: .9, lines: [['ad', 'var(--text-secondary)']]},
+];
+function detail() {
+  const s = SERIES.find(x => x.id === SEL), box = $('#detail');
+  if (!s || !DATA.series[SEL]) { box.innerHTML = '<div class="muted">Pick a row.</div>'; return; }
+  const years = +$('#win').value, metric = $('#metric').value;
+  const rows = RANKABLE.map(id => ({m: MET[id], st: stats(SEL, id, years)})).filter(r => r.m && r.st);
+  const any = DATA.series[SEL].m;
+  box.innerHTML = `
+    <h2>${s.name} <span class="small">${$('#win').selectedOptions[0].textContent}</span></h2>
+    <div class="hint" style="margin:2px 0 8px"><b>${s.ticker || ''}</b> · ${idxFamily(s)}${
+      s.grp === 'sub_industry' && s.industry ? ` · industry: ${s.industry}` : ''}</div>
+    <div class="legend">${PANELS.flatMap(p => p.lines).filter(([k]) => any[k] && MET[k]).map(([k, c]) =>
+      `<span><span class="key" style="border-color:${c}"></span>${MET[k].label}</span>`).join('')}</div>
+    <svg id="chart"></svg>
+    <div class="scroll" style="margin-top:10px"><table>
+      <thead><tr class="hdr"><th class="lbl">Metric</th><th>Current</th><th>5D Δ</th><th>Mean</th><th>Z</th><th>Pctile</th></tr></thead>
+      <tbody>${rows.map(({m, st}) => `<tr class="${m.id === metric ? 'sel' : ''}">
+        <td class="lbl">${m.label}</td><td>${f1(st.cur)}</td>
+        <td>${st.chg5 == null ? '' : (st.chg5 > 0 ? '+' : '') + st.chg5.toFixed(1)}</td><td>${f1(st.mean)}</td>
+        <td style="background:${heat(st.z, 2.5, m.id)}">${f2(st.z)}</td>
+        <td style="background:${heat(st.pct == null ? null : st.pct - .5, .5, m.id)}">${st.pct == null ? '' : (st.pct * 100).toFixed(0) + '%'}</td></tr>`).join('')}
+      </tbody></table></div>`;
+  drawChart(SEL, years);
+}
+
+function drawChart(sid, years) {
+  const svg = $('#chart'), h = hist(sid);
+  if (!svg || !h) return;
+  const lastDay = h.d[h.d.length - 1], from = years ? lastDay - Math.round(years * 365.25) : -Infinity;
+  const idx = [];
+  for (let i = 0; i < h.d.length; i++) if (h.d[i] >= from) idx.push(i);
+  if (idx.length < 2) return;
+  const panels = PANELS.map(p => ({...p, lines: p.lines.filter(([k]) => h.m[k])})).filter(p => p.lines.length);
+  const W = svg.clientWidth || 600, unit = 105, gap = 16, m = {t: 6, r: 14, b: 22, l: 56};
+  const H = m.t + m.b + panels.reduce((a, p) => a + p.h * unit, 0) + gap * (panels.length - 1);
+  const iw = W - m.l - m.r, x0 = h.d[idx[0]], x1 = h.d[idx[idx.length - 1]];
+  const X = d => m.l + (d - x0) / ((x1 - x0) || 1) * iw;
+  const ticks = (lo, hi) => {
+    const raw = (hi - lo) / 3, mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+    const step = [1, 2, 2.5, 5, 10].map(k => k * mag).find(k => k >= raw) || raw;
+    const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) out.push(+v.toFixed(6)); return out;
+  };
+  let html = '', top = m.t;
+  for (const p of panels) {
+    const ph = p.h * unit;
+    const vs = [];
+    for (const [k] of p.lines) for (const i of idx) if (h.m[k][i] != null) vs.push(h.m[k][i]);
+    let lo = Math.min(...vs), hi = Math.max(...vs);
+    if (p.pct) { lo = Math.max(0, lo); hi = Math.min(100, hi); }
+    const pad = (hi - lo) * .06 || Math.abs(hi) * .05 || 1; lo -= pad; hi += pad;
+    if (p.pct) lo = Math.max(lo, p.lines.length > 1 ? -1 : lo);
+    const Y = v => top + ph - (v - lo) / (hi - lo) * ph; p.Y = Y;
+    html += ticks(lo, hi).map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--border)"/>
+      <text x="${m.l - 6}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--text-muted)">${fmt(v)}</text>`).join('');
+    html += `<text x="${m.l + 6}" y="${top + 11}" font-size="11" font-weight="600" fill="var(--text-secondary)">${p.lbl}</text>`;
+    for (const [k, col] of p.lines) {
+      let path = '', pen = false;
+      for (const i of idx) { const v = h.m[k][i]; if (v == null) { pen = false; continue; }
+        path += (pen ? 'L' : 'M') + X(h.d[i]).toFixed(1) + ' ' + Y(v).toFixed(1); pen = true; }
+      html += `<path d="${path}" fill="none" stroke="${col}" stroke-width="1.3" stroke-linejoin="round"/>
+        <circle class="cdot" data-k="${k}" r="2.8" fill="${col}" style="display:none"/>`;
+    }
+    top += ph + gap;
+  }
+  const y0 = new Date(x0 * DAY).getUTCFullYear(), y1 = new Date(x1 * DAY).getUTCFullYear(), ys = Math.max(1, Math.ceil((y1 - y0) / 8));
+  for (let y = y0 + 1; y <= y1; y += ys) { const d = Date.UTC(y, 0, 1) / DAY;
+    html += `<text x="${X(d).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--text-muted)">${y}</text>`; }
+  html += `<line id="ccross" y1="${m.t}" y2="${H - m.b}" stroke="var(--border-strong)" style="display:none"/>`;
+  svg.style.height = H + 'px';
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = html;
+  const panelOf = {}; panels.forEach(p => p.lines.forEach(([k]) => panelOf[k] = p));
+  const tip = $('#tip'), cross = svg.querySelector('#ccross'), dots = svg.querySelectorAll('.cdot');
+  svg.onmouseleave = () => { tip.style.display = 'none'; cross.style.display = 'none'; dots.forEach(c => c.style.display = 'none'); };
+  svg.onmousemove = ev => {
+    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width);
+    if (px < m.l || px > W - m.r) { svg.onmouseleave(); return; }
+    const d = x0 + (px - m.l) / iw * (x1 - x0);
+    let lo = 0, hi = idx.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (h.d[idx[mid]] < d) lo = mid; else hi = mid; }
+    const i = Math.abs(h.d[idx[lo]] - d) <= Math.abs(h.d[idx[hi]] - d) ? idx[lo] : idx[hi];
+    const cx = X(h.d[i]).toFixed(1);
+    cross.style.display = ''; cross.setAttribute('x1', cx); cross.setAttribute('x2', cx);
+    dots.forEach(c => { const k = c.dataset.k, v = h.m[k][i];
+      if (v == null) { c.style.display = 'none'; return; }
+      c.style.display = ''; c.setAttribute('cx', cx); c.setAttribute('cy', panelOf[k].Y(v).toFixed(1)); });
+    tip.style.display = 'block';
+    tip.innerHTML = `<b>${isoDay(h.d[i])}</b>` + panels.flatMap(p => p.lines).map(([k]) =>
+      `<br>${MET[k] ? MET[k].label : k}: ${fmt(h.m[k][i])}`).join('');
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 220) + 'px';
+    tip.style.top = (ev.clientY - 10) + 'px';
+  };
+}
+
+function save() {
+  try { localStorage.setItem('internals.state', JSON.stringify({m: $('#metric').value, w: $('#win').value,
+        g: $('#grp').value, sel: SEL})); } catch (e) {}
+}
+['#metric', '#win', '#grp'].forEach(id => $(id).onchange = () => { save(); compute(); detail(); });
+$('#q').oninput = compute;
+$('#csv').onclick = () => {
+  const esc = v => v == null ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v;
+  let out = ['series', 'ticker', 'group', 'metric', 'history', 'current', 'current_date', 'chg_5d', 'mean', 'sd', 'z', 'percentile', 'min', 'max', 'days'].join(',') + '\n';
+  for (const r of ROWS) {
+    const st = r.st;
+    out += [r.s.name, r.s.ticker, r.s.grp, $('#metric').value, $('#win').selectedOptions[0].textContent, st.cur,
+      isoDay(st.curDay), st.chg5, st.mean, st.sd, st.z, st.pct, st.min, st.max, st.n].map(esc).join(',') + '\n';
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([out], {type: 'text/csv'}));
+  a.download = `internals_${$('#metric').value}.csv`; a.click();
+};
+let rzTimer;
+addEventListener('resize', () => { clearTimeout(rzTimer); rzTimer = setTimeout(() => { if (SEL) drawChart(SEL, +$('#win').value); }, 150); });
+
+(async () => {
+  [SERIES, DATA] = await Promise.all([fetch('/api/series').then(r => r.json()), fetch('/api/internals').then(r => r.json())]);
+  if (DATA.error) { $('#tab').innerHTML = `<tr><td class="err">${DATA.error}</td></tr>`; $('#p-data').textContent = 'no internals data'; return; }
+  for (const m of DATA.metrics) MET[m.id] = m;
+  const opts = RANKABLE.filter(id => MET[id]);
+  $('#metric').innerHTML = opts.map(id => `<option value="${id}">${MET[id].label}</option>`).join('');
+  let st = {};
+  try { st = JSON.parse(localStorage.getItem('internals.state') || '{}'); } catch (e) {}
+  if (st.m && opts.includes(st.m)) $('#metric').value = st.m;
+  if (st.w != null) $('#win').value = st.w;
+  if (st.g != null) $('#grp').value = st.g;
+  SEL = st.sel && DATA.series[st.sel] ? st.sel : (DATA.series['ac:s_p500'] ? 'ac:s_p500' : null);
+  let last = 0;
+  for (const s of Object.values(DATA.series)) { let d = s.d0; for (const x of s.dd) d += x; if (d > last) last = d; }
+  $('#p-data').innerHTML = `internals through <b>${isoDay(last)}</b> <span class="muted">· ${DATA.source}</span>`;
+  compute(); detail();
+})();
+</script>
+</body>
+</html>
