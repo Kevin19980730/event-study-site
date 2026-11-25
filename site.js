@@ -45,7 +45,23 @@ async function inflate(bytes) {
   return JSON.parse(text);
 }
 
+/* valuation.bin (Valuation page only): same envelope as data.bin, fetched on first use.
+   An encrypted build reuses the key the gate already derived. */
+let RAWKEY = null, VALUATION = null;
+async function loadValuation() {
+  if (VALUATION) return VALUATION;
+  const r = await realFetch('valuation.bin', {cache: 'no-cache'});
+  if (!r.ok) return {error: 'valuation.bin: HTTP ' + r.status};
+  const buf = new Uint8Array(await r.arrayBuffer());
+  const magic = String.fromCharCode(...buf.slice(0, 4));
+  if (magic === 'ESD0') return VALUATION = await inflate(buf.slice(4));
+  if (magic !== 'ESD1' || !RAWKEY) return {error: 'valuation data is locked'};
+  const dv = new DataView(buf.buffer);
+  return VALUATION = await openWith(RAWKEY, {iv: buf.slice(20, 32), ct: buf.slice(36), iter: dv.getUint32(32)});
+}
+
 async function openWith(rawKey, blob) {
+  RAWKEY = rawKey;
   const key = await crypto.subtle.importKey('raw', rawKey, 'AES-GCM', false, ['decrypt']);
   const plain = await crypto.subtle.decrypt({name: 'AES-GCM', iv: blob.iv}, key, blob.ct);
   return inflate(plain);
@@ -1033,6 +1049,7 @@ window.fetch = async function (input, init) {
       case '/api/period.csv': return new Response(periodCSV(body), {headers: {'Content-Type': 'text/csv'}});
       case '/api/seasonal': return json(seasonalJSON(body));
       case '/api/seasonal.csv': return new Response(seasonalCSV(body), {headers: {'Content-Type': 'text/csv'}});
+      case '/api/valuation': return json(await loadValuation());
       case '/api/update': return json({status: 'unavailable', error: 'read-only website'}, 403);
       default: return json({error: 'not found'}, 404);
     }

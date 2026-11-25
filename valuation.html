@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Valuation — multiples vs their own history</title>
+<link rel="stylesheet" href="app.css?v=7c4f10a138">
+<style>
+td.lbl,th.lbl{text-align:left;position:sticky;left:0;background:var(--surface-1);
+  z-index:1;border-right:1px solid var(--border)}
+th.lbl{background:var(--surface-2);z-index:3}
+thead tr.hdr th{top:0}
+th.sort{cursor:pointer;user-select:none;white-space:nowrap}
+th.sort.on{color:var(--accent)}
+td.grp{text-align:left;color:var(--text-muted);font-size:11px}
+tbody tr.pick{cursor:pointer}
+tbody tr.pick:hover td{background:var(--surface-2)}
+tbody tr.sel td{box-shadow:inset 0 1px 0 var(--accent),inset 0 -1px 0 var(--accent)}
+td.stale{color:var(--text-muted)}
+#hist{width:100%;height:300px;display:block}
+.key{display:inline-block;width:18px;height:0;border-top:2px solid;vertical-align:3px;margin-right:5px}
+.key.dash{border-top-style:dashed}
+.band{display:inline-block;width:14px;height:10px;vertical-align:-1px;margin-right:5px}
+.small{font-size:11px;color:var(--text-muted);font-weight:400}
+.pair{display:grid;grid-template-columns:minmax(300px,2fr) minmax(280px,1fr);gap:14px}
+@media (max-width:900px){.pair{grid-template-columns:1fr}}
+.pair .card{margin-bottom:0}
+input[type=search]{min-width:180px}
+</style>
+<script src="site.js?v=98a74caa5a"></script>
+<style>#btn-update{display:none}</style>
+</head>
+<body>
+<header>
+  <h1>Valuation</h1>
+  <nav class="tabs" style="margin:0">
+    <button onclick="location.href='./'">Event study</button>
+    <button onclick="location.href='rotate.html'">Rotation</button>
+    <button onclick="location.href='seasonal.html'">Seasonality</button>
+    <button class="on">Valuation</button>
+  </nav>
+  <span class="pill" id="p-data">loading…</span>
+  <span class="spacer"></span>
+  <button id="theme">◐</button>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Multiples vs their own history</h2>
+    <div class="cond">
+      <label class="opt">Metric <select id="metric"></select></label>
+      <label class="opt">History
+        <select id="win">
+          <option value="0">full history</option>
+          <option value="20">last 20 years</option>
+          <option value="10" selected>last 10 years</option>
+          <option value="5">last 5 years</option>
+          <option value="3">last 3 years</option>
+        </select></label>
+      <label class="opt">Group
+        <select id="grp">
+          <option value="">all</option>
+          <option value="asset_class">asset classes</option>
+          <option value="sector">GICS sectors</option>
+          <option value="industry">GICS industries</option>
+          <option value="sub_industry">GICS sub-industries</option>
+        </select></label>
+      <input type="search" id="q" placeholder="filter by name">
+      <span class="spacer"></span>
+      <button id="csv">Export CSV</button>
+    </div>
+    <div class="hint">Each multiple is the index level (or enterprise value) over Bloomberg's
+      blended-forward consensus (BEst) per-share figure, every trading day. <b>Z-score</b> =
+      (current − mean) ÷ standard deviation over the chosen history; <b>percentile</b> = share
+      of days in that history at or below today's value. Days with a zero or negative
+      denominator (losses) are left out. Red = rich vs its own past, teal = cheap.
+      Click a row for its history.</div>
+  </div>
+
+  <div class="pair">
+    <div class="card">
+      <div class="scroll" style="max-height:78vh"><table id="tab"></table></div>
+      <div class="legend" id="tab-legend"></div>
+    </div>
+    <div class="card" id="detail"><div class="muted">Pick a row.</div></div>
+  </div>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let SERIES = [], VAL = null, ROWS = [], SORT = {key: 'z', dir: -1}, SEL = null;
+const GROUPS = {asset_class: 'Asset class', benchmark: 'Benchmark', sector: 'Sector',
+                industry: 'Industry', sub_industry: 'Sub-industry'};
+const DAY = 864e5;
+const isoDay = d => new Date(d * DAY).toISOString().slice(0, 10);
+
+$('#theme').onclick = () => {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : cur === 'light' ? '' : 'dark';
+  if (next) document.documentElement.setAttribute('data-theme', next);
+  else document.documentElement.removeAttribute('data-theme');
+};
+
+const CAP = 60;
+function heat(v, scale) {             // positive = rich -> red, negative = cheap -> teal
+  if (v == null || !scale) return '';
+  const t = Math.max(-1, Math.min(1, v / scale));
+  if (!t) return '';
+  return `color-mix(in srgb, var(${t > 0 ? '--neg' : '--pos'}) ${(Math.abs(t) * CAP).toFixed(1)}%, var(--mid))`;
+}
+const f1 = v => v == null ? '' : v.toFixed(1);
+const f2 = v => v == null ? '' : v.toFixed(2);
+
+/* decode {d0, dd, m:{metric:[x100 | null]}} once per series */
+const CACHE = {};
+function hist(sid) {
+  if (CACHE[sid]) return CACHE[sid];
+  const s = VAL.series[sid];
+  if (!s) return null;
+  const n = s.dd.length, d = new Int32Array(n);
+  let day = s.d0;
+  for (let i = 0; i < n; i++) { day += s.dd[i]; d[i] = day; }
+  const m = {};
+  for (const [k, arr] of Object.entries(s.m)) {          // x100 ints, delta vs the previous non-empty value
+    let acc = 0;
+    m[k] = arr.map(v => v == null ? null : (VAL.delta ? (acc += v) : v) / VAL.scale);
+  }
+  return CACHE[sid] = {d, m};
+}
+
+/* the statistics for one series and metric over the trailing window */
+function stats(sid, metric, years) {
+  const h = hist(sid);
+  if (!h || !h.m[metric]) return null;
+  const v = h.m[metric], d = h.d, lastDay = d[d.length - 1];
+  let ci = v.length - 1;
+  while (ci >= 0 && v[ci] == null) ci--;
+  if (ci < 0) return null;
+  const cur = v[ci], from = years ? lastDay - Math.round(years * 365.25) : -Infinity;
+  const xs = [];
+  let first = null;
+  for (let i = 0; i < v.length; i++) if (d[i] >= from && v[i] != null) { xs.push(v[i]); if (first == null) first = d[i]; }
+  if (xs.length < 126) return {cur, curDay: d[ci], lastDay, n: xs.length, first};  // < ~half a year: no stats
+  const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+  const sd = Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / (xs.length - 1));
+  const below = xs.filter(x => x <= cur).length;
+  return {cur, curDay: d[ci], lastDay, n: xs.length, first, mean, sd,
+          z: sd ? (cur - mean) / sd : null, pct: below / xs.length,
+          min: Math.min(...xs), max: Math.max(...xs)};
+}
+
+function compute() {
+  const metric = $('#metric').value, years = +$('#win').value, g = $('#grp').value,
+        q = $('#q').value.trim().toLowerCase();
+  ROWS = SERIES.filter(s => VAL.series[s.id] && (!g || s.grp === g) &&
+                            (!q || s.name.toLowerCase().includes(q) || (s.ticker || '').toLowerCase().includes(q)))
+    .map(s => ({s, st: stats(s.id, metric, years)}))
+    .filter(r => r.st);
+  render();
+}
+
+const COLS = [
+  ['name', 'Series', r => r.s.name], ['grp', 'Group', r => r.s.grp],
+  ['cur', 'Current', r => r.st.cur], ['mean', 'Mean', r => r.st.mean], ['sd', 'Std dev', r => r.st.sd],
+  ['z', 'Z-score', r => r.st.z], ['pct', 'Percentile', r => r.st.pct],
+  ['min', 'Min', r => r.st.min], ['max', 'Max', r => r.st.max], ['n', 'Days', r => r.st.n],
+];
+function render() {
+  const get = COLS.find(c => c[0] === SORT.key)[2];
+  ROWS.sort((a, b) => {
+    const x = get(a), y = get(b);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return (typeof x === 'string' ? x.localeCompare(y) : x - y) * SORT.dir;
+  });
+  const head = COLS.map(([k, lbl], i) => `<th class="sort${i === 0 ? ' lbl' : ''}${SORT.key === k ? ' on' : ''}" data-k="${k}">${
+    lbl}${SORT.key === k ? (SORT.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('');
+  const body = ROWS.map(r => {
+    const st = r.st, stale = st.lastDay - st.curDay > 35;
+    return `<tr class="pick${r.s.id === SEL ? ' sel' : ''}" data-id="${r.s.id}">
+      <td class="lbl" title="${r.s.ticker || ''}">${r.s.name}</td>
+      <td class="grp">${GROUPS[r.s.grp] || r.s.grp}</td>
+      <td class="${stale ? 'stale' : ''}" ${stale ? `title="last value ${isoDay(st.curDay)}"` : ''}>${f1(st.cur)}</td>
+      <td>${f1(st.mean)}</td><td>${f1(st.sd)}</td>
+      <td style="background:${heat(st.z, 2.5)}"><b>${f2(st.z)}</b></td>
+      <td style="background:${heat(st.pct == null ? null : st.pct - .5, .5)}">${st.pct == null ? '' : (st.pct * 100).toFixed(0) + '%'}</td>
+      <td>${f1(st.min)}</td><td>${f1(st.max)}</td><td>${st.n}</td></tr>`;
+  }).join('');
+  $('#tab').innerHTML = `<thead><tr class="hdr">${head}</tr></thead><tbody>${body ||
+    '<tr><td class="lbl muted" colspan="10">No series match.</td></tr>'}</tbody>`;
+  const zs = ROWS.map(r => r.st.z).filter(z => z != null);
+  const rich = zs.filter(z => z >= 1).length, cheap = zs.filter(z => z <= -1).length;
+  $('#tab-legend').innerHTML = `<span>${ROWS.length} series</span><span>z ≥ +1: <b>${rich}</b></span>
+    <span>z ≤ −1: <b>${cheap}</b></span><span>median z ${zs.length ? f2(zs.sort((a, b) => a - b)[zs.length >> 1]) : '—'}</span>`;
+  document.querySelectorAll('#tab th.sort').forEach(th => th.onclick = () => {
+    const k = th.dataset.k;
+    SORT = SORT.key === k ? {key: k, dir: -SORT.dir} : {key: k, dir: k === 'name' || k === 'grp' ? 1 : -1};
+    render();
+  });
+  document.querySelectorAll('#tab tr.pick').forEach(tr => tr.onclick = () => { SEL = tr.dataset.id; save(); render(); detail(); });
+}
+
+/* ---------- detail: one series, every metric + history chart ---------- */
+function detail() {
+  const s = SERIES.find(x => x.id === SEL), box = $('#detail');
+  if (!s || !VAL.series[SEL]) { box.innerHTML = '<div class="muted">Pick a row.</div>'; return; }
+  const years = +$('#win').value, metric = $('#metric').value;
+  const rows = VAL.metrics.map(m => ({m, st: stats(SEL, m.id, years)})).filter(r => r.st);
+  const st = stats(SEL, metric, years);
+  box.innerHTML = `
+    <h2>${s.name} <span class="small">${s.ticker || ''} · ${$('#win').selectedOptions[0].textContent}</span></h2>
+    <svg id="hist"></svg>
+    <div class="legend">
+      <span><span class="key" style="border-color:var(--accent)"></span>${$('#metric').selectedOptions[0].textContent}</span>
+      <span><span class="key dash" style="border-color:var(--text-secondary)"></span>mean</span>
+      <span><span class="band" style="background:color-mix(in srgb,var(--text-muted) 22%,transparent)"></span>±1σ</span>
+      <span><span class="band" style="background:color-mix(in srgb,var(--text-muted) 10%,transparent)"></span>±2σ</span>
+    </div>
+    <div class="scroll" style="margin-top:10px"><table>
+      <thead><tr class="hdr"><th class="lbl">Metric</th><th>Current</th><th>Mean</th><th>Z</th><th>Pctile</th></tr></thead>
+      <tbody>${rows.map(({m, st}) => `<tr class="${m.id === metric ? 'sel' : ''}">
+        <td class="lbl">${m.label}</td><td>${f1(st.cur)}</td><td>${f1(st.mean)}</td>
+        <td style="background:${heat(st.z, 2.5)}">${f2(st.z)}</td>
+        <td style="background:${heat(st.pct == null ? null : st.pct - .5, .5)}">${st.pct == null ? '' : (st.pct * 100).toFixed(0) + '%'}</td></tr>`).join('')}
+      </tbody></table></div>
+    <div class="hint">${st && st.first != null ? `History from ${isoDay(st.first)} to ${isoDay(st.lastDay)}, ${st.n} trading days.` : ''}</div>`;
+  drawHist(SEL, metric, years);
+}
+
+function drawHist(sid, metric, years) {
+  const svg = $('#hist'), h = hist(sid), st = stats(sid, metric, years);
+  if (!svg || !h || !h.m[metric] || !st) return;
+  const from = years ? st.lastDay - Math.round(years * 365.25) : -Infinity;
+  const pts = [];
+  for (let i = 0; i < h.d.length; i++) if (h.d[i] >= from) pts.push([h.d[i], h.m[metric][i]]);
+  const W = svg.clientWidth || 600, H = 300, m = {t: 12, r: 14, b: 22, l: 46};
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const vals = pts.map(p => p[1]).filter(v => v != null);
+  const bands = st.sd ? [st.mean - 2 * st.sd, st.mean + 2 * st.sd] : [];
+  let lo = Math.min(...vals, ...bands), hi = Math.max(...vals, ...bands);
+  const pad = (hi - lo) * .05 || 1; lo -= pad; hi += pad;
+  const x0 = pts[0][0], x1 = pts[pts.length - 1][0];
+  const X = d => m.l + (d - x0) / ((x1 - x0) || 1) * iw;
+  const Y = v => m.t + ih - (v - lo) / (hi - lo) * ih;
+  let path = '', pen = false;
+  for (const [d, v] of pts) {
+    if (v == null) { pen = false; continue; }
+    path += (pen ? 'L' : 'M') + X(d).toFixed(1) + ' ' + Y(v).toFixed(1); pen = true;
+  }
+  const rawStep = (hi - lo) / 5, mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const step = [1, 2, 2.5, 5, 10].map(k => k * mag).find(k => k >= rawStep);
+  const yt = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) yt.push(+v.toFixed(6));
+  const y0 = new Date(x0 * DAY).getUTCFullYear(), y1 = new Date(x1 * DAY).getUTCFullYear();
+  const ys = Math.max(1, Math.ceil((y1 - y0) / 8));
+  const xt = [];
+  for (let y = y0 + 1; y <= y1; y += ys) xt.push([y, Date.UTC(y, 0, 1) / DAY]);
+  const band = (a, b, op) => st.sd ? `<rect x="${m.l}" width="${iw}" y="${Y(b).toFixed(1)}" height="${(Y(a) - Y(b)).toFixed(1)}"
+      fill="color-mix(in srgb,var(--text-muted) ${op}%,transparent)"/>` : '';
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML =
+    band(st.mean - 2 * st.sd, st.mean + 2 * st.sd, 10) + band(st.mean - st.sd, st.mean + st.sd, 22) +
+    yt.map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--border)"/>
+      <text x="${m.l - 6}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--text-muted)">${+v.toFixed(2)}</text>`).join('') +
+    xt.map(([y, d]) => `<text x="${X(d).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--text-muted)">${y}</text>`).join('') +
+    (st.sd ? `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(st.mean).toFixed(1)}" y2="${Y(st.mean).toFixed(1)}"
+      stroke="var(--text-secondary)" stroke-dasharray="5 4"/>` : '') +
+    `<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round"/>` +
+    `<circle cx="${X(st.curDay).toFixed(1)}" cy="${Y(st.cur).toFixed(1)}" r="3.5" fill="var(--accent)"/>` +
+    `<line id="hcross" y1="${m.t}" y2="${m.t + ih}" stroke="var(--border-strong)" style="display:none"/>`;
+  const tip = $('#tip'), cross = svg.querySelector('#hcross');
+  svg.onmousemove = ev => {
+    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width);
+    const d = x0 + (px - m.l) / iw * (x1 - x0);
+    let best = null;
+    for (const p of pts) if (p[1] != null && (!best || Math.abs(p[0] - d) < Math.abs(best[0] - d))) best = p;
+    if (!best || px < m.l || px > W - m.r) { tip.style.display = 'none'; cross.style.display = 'none'; return; }
+    cross.style.display = ''; cross.setAttribute('x1', X(best[0])); cross.setAttribute('x2', X(best[0]));
+    const z = st.sd ? (best[1] - st.mean) / st.sd : null;
+    tip.style.display = 'block';
+    tip.innerHTML = `<b>${isoDay(best[0])}</b><br>${best[1].toFixed(2)}${z == null ? '' : ` · z ${z.toFixed(2)}`}`;
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 170) + 'px';
+    tip.style.top = (ev.clientY - 10) + 'px';
+  };
+  svg.onmouseleave = () => { tip.style.display = 'none'; cross.style.display = 'none'; };
+}
+
+function save() {
+  try { localStorage.setItem('valuation.state', JSON.stringify({m: $('#metric').value, w: $('#win').value,
+        g: $('#grp').value, sel: SEL})); } catch (e) {}
+}
+['#metric', '#win', '#grp'].forEach(id => $(id).onchange = () => { save(); compute(); detail(); });
+$('#q').oninput = compute;
+$('#csv').onclick = () => {
+  const esc = v => v == null ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v;
+  let out = ['series', 'ticker', 'group', 'metric', 'history', 'current', 'current_date', 'mean', 'sd', 'z', 'percentile', 'min', 'max', 'days'].join(',') + '\n';
+  for (const r of ROWS) {
+    const st = r.st;
+    out += [r.s.name, r.s.ticker, r.s.grp, $('#metric').value, $('#win').selectedOptions[0].textContent, st.cur,
+      isoDay(st.curDay), st.mean, st.sd, st.z, st.pct, st.min, st.max, st.n].map(esc).join(',') + '\n';
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([out], {type: 'text/csv'}));
+  a.download = `valuation_${$('#metric').value}.csv`; a.click();
+};
+let rzTimer;
+addEventListener('resize', () => { clearTimeout(rzTimer); rzTimer = setTimeout(() => { if (SEL) drawHist(SEL, $('#metric').value, +$('#win').value); }, 150); });
+
+(async () => {
+  [SERIES, VAL] = await Promise.all([fetch('/api/series').then(r => r.json()), fetch('/api/valuation').then(r => r.json())]);
+  if (VAL.error) { $('#tab').innerHTML = `<tr><td class="err">${VAL.error}</td></tr>`; $('#p-data').textContent = 'no valuation data'; return; }
+  // offer only metrics with at least one value (an all-null metric would just show "No series match.")
+  VAL.metrics = VAL.metrics.filter(m => Object.values(VAL.series).some(s => (s.m[m.id] || []).some(x => x !== null)));
+  $('#metric').innerHTML = VAL.metrics.map(m => `<option value="${m.id}">${m.label}</option>`).join('');
+  let st = {};
+  try { st = JSON.parse(localStorage.getItem('valuation.state') || '{}'); } catch (e) {}
+  if (st.m && VAL.metrics.some(m => m.id === st.m)) $('#metric').value = st.m;
+  if (st.w != null) $('#win').value = st.w;
+  if (st.g != null) $('#grp').value = st.g;
+  SEL = st.sel && VAL.series[st.sel] ? st.sel : (VAL.series['ac:s_p500'] ? 'ac:s_p500' : null);
+  let last = 0;
+  for (const s of Object.values(VAL.series)) { let d = s.d0; for (const x of s.dd) d += x; if (d > last) last = d; }
+  $('#p-data').innerHTML = `valuations through <b>${isoDay(last)}</b> <span class="muted">· ${VAL.source}</span>`;
+  compute(); detail();
+})();
+</script>
+</body>
+</html>
