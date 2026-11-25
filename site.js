@@ -1039,6 +1039,8 @@ window.fetch = async function (input, init) {
   await new Promise(r => setTimeout(r, 30));      // let "Running…" paint before heavy work
   const body = init && init.body ? JSON.parse(init.body) : {};
   try {
+    if (url.startsWith('/api/stock/'))                     // one S&P 1500 stock's history (Stocks page)
+      return json(await loadSide('stocks/' + decodeURIComponent(url.slice(11)).replace(/[^A-Za-z0-9_.\-]/g, '') + '.bin'));
     switch (url) {
       case '/api/series': return json(DATA.seriesList);
       case '/api/metrics': return json(DATA.metrics);
@@ -1053,6 +1055,7 @@ window.fetch = async function (input, init) {
       case '/api/seasonal.csv': return new Response(seasonalCSV(body), {headers: {'Content-Type': 'text/csv'}});
       case '/api/valuation': return json(await loadValuation());
       case '/api/internals': return json(await loadSide('internals.bin'));
+      case '/api/stocks': return json(await loadSide('stocks.bin'));
       case '/api/update': return json({status: 'unavailable', error: 'read-only website'}, 403);
       default: return json({error: 'not found'}, 404);
     }

@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stock valuation — S&amp;P 1500 members vs their own history</title>
+<link rel="stylesheet" href="app.css?v=7c4f10a138">
+<style>
+td.lbl,th.lbl{text-align:left;position:sticky;left:0;background:var(--surface-1);
+  z-index:1;border-right:1px solid var(--border)}
+th.lbl{background:var(--surface-2);z-index:3}
+thead tr.hdr th{top:0}
+th.sort{cursor:pointer;user-select:none;white-space:nowrap}
+th.sort.on{color:var(--accent)}
+td.grp{text-align:left;color:var(--text-muted);font-size:11px}
+td.nm{text-align:left;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+tbody tr.pick{cursor:pointer}
+tbody tr.pick:hover td{background:var(--surface-2)}
+tbody tr.sel td{box-shadow:inset 0 1px 0 var(--accent),inset 0 -1px 0 var(--accent)}
+td.stale{color:var(--text-muted)}
+#hist{width:100%;height:300px;display:block}
+.key{display:inline-block;width:18px;height:0;border-top:2px solid;vertical-align:3px;margin-right:5px}
+.key.dash{border-top-style:dashed}
+.band{display:inline-block;width:14px;height:10px;vertical-align:-1px;margin-right:5px}
+.small{font-size:11px;color:var(--text-muted);font-weight:400}
+.pair{display:grid;grid-template-columns:minmax(300px,2fr) minmax(280px,1fr);gap:14px}
+@media (max-width:900px){.pair{grid-template-columns:1fr}}
+.pair .card{margin-bottom:0}
+input[type=search]{min-width:160px}
+select.gics{max-width:220px}
+</style>
+<script src="site.js?v=804633a4e0"></script>
+<style>#btn-update{display:none}</style>
+</head>
+<body>
+<header>
+  <h1>Stocks</h1>
+  <nav class="tabs" style="margin:0">
+    <button onclick="location.href='./'">Event study</button>
+    <button onclick="location.href='rotate.html'">Rotation</button>
+    <button onclick="location.href='seasonal.html'">Seasonality</button>
+    <button onclick="location.href='valuation.html'">Valuation</button>
+    <button onclick="location.href='internals.html'">Internals</button>
+    <button class="on">Stocks</button>
+  </nav>
+  <span class="pill" id="p-data">loading…</span>
+  <span class="spacer"></span>
+  <button id="theme">◐</button>
+</header>
+
+<main>
+  <div class="card">
+    <h2>S&amp;P 1500 members: multiples vs their own history</h2>
+    <div class="cond">
+      <label class="opt">Metric <select id="metric"></select></label>
+      <label class="opt">History
+        <select id="win">
+          <option value="0">full history</option>
+          <option value="20">last 20 years</option>
+          <option value="10" selected>last 10 years</option>
+          <option value="5">last 5 years</option>
+          <option value="3">last 3 years</option>
+        </select></label>
+      <label class="opt">Size
+        <select id="top">
+          <option value="0">all S&amp;P 1500</option>
+          <option value="50">top 50 by market cap</option>
+          <option value="100">top 100</option>
+          <option value="500">top 500</option>
+          <option value="1000">top 1000</option>
+        </select></label>
+      <label class="opt">Sector <select id="sec" class="gics"></select></label>
+      <label class="opt">Industry <select id="ind" class="gics"></select></label>
+      <label class="opt">Sub-industry <select id="sub" class="gics"></select></label>
+      <input type="search" id="q" placeholder="ticker or name">
+      <span class="spacer"></span>
+      <button id="csv">Export CSV</button>
+    </div>
+    <div class="hint">Every current S&amp;P 1500 member, ranked by market cap, from Bloomberg G 52 (individual
+      fundamental). Each multiple is the share price (or enterprise value) over Bloomberg's blended-forward consensus
+      (BEst) figure, every trading day since 2002. <b>Z-score</b> = (current − mean) ÷ standard deviation over the
+      chosen history; <b>percentile</b> = share of days in that history at or below today's value. Days with a zero
+      or negative denominator (losses) are left out; stats need at least ~6 months of values. Red = rich vs its own
+      past, teal = cheap. Click a row for its history.</div>
+  </div>
+
+  <div class="pair">
+    <div class="card">
+      <div class="scroll" style="max-height:78vh"><table id="tab"></table></div>
+      <div class="legend" id="tab-legend"></div>
+    </div>
+    <div class="card" id="detail"><div class="muted">Pick a row.</div></div>
+  </div>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let STK = null, VAL = null, ROWS = [], SORT = {key: 'r', dir: 1}, SEL = null;
+const DAY = 864e5;
+const isoDay = d => new Date(d * DAY).toISOString().slice(0, 10);
+
+$('#theme').onclick = () => {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : cur === 'light' ? '' : 'dark';
+  if (next) document.documentElement.setAttribute('data-theme', next);
+  else document.documentElement.removeAttribute('data-theme');
+};
+
+const CAP = 60;
+function heat(v, scale) {             // positive = rich -> red, negative = cheap -> teal
+  if (v == null || !scale) return '';
+  const t = Math.max(-1, Math.min(1, v / scale));
+  if (!t) return '';
+  return `color-mix(in srgb, var(${t > 0 ? '--neg' : '--pos'}) ${(Math.abs(t) * CAP).toFixed(1)}%, var(--mid))`;
+}
+let YR = {lo: null, hi: null};          // manual chart Y range; null = auto
+const f1 = v => v == null ? '' : v.toFixed(1);
+const f2 = v => v == null ? '' : v.toFixed(2);
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+const capFmt = v => v >= 1000 ? (v / 1000).toFixed(2) + 'T' : v >= 1 ? v.toFixed(1) + 'B' : (v * 1000).toFixed(0) + 'M';
+
+/* ---------- table: precomputed stats from stocks.json ---------- */
+// s.s[metric] = [cur, curDay, w(full), w(20y), w(10y), w(5y), w(3y)]; w = [n] or [n, mean, sd, z, pct, min, max]
+function rowStats(s, metric, years) {
+  const a = s.s[metric];
+  if (!a) return null;
+  const w = a[2 + STK.windows.indexOf(years)] || [0];
+  const st = {cur: a[0], curDay: a[1], lastDay: s.last, n: w[0]};
+  if (w.length > 1) Object.assign(st, {mean: w[1], sd: w[2], z: w[3], pct: w[4], min: w[5], max: w[6]});
+  return st;
+}
+
+function fillGics() {
+  const sec = $('#sec').value, ind = $('#ind').value, sub = $('#sub').value;
+  const uniq = (f, pred) => [...new Set(STK.stocks.filter(pred).map(f))].sort();
+  const opts = (vals, cur) => `<option value="">all</option>` + vals.map(v => `<option${v === cur ? ' selected' : ''}>${esc(v)}</option>`).join('');
+  $('#sec').innerHTML = opts(uniq(s => s.sec, () => true), sec);
+  const inds = uniq(s => s.ind, s => !sec || s.sec === sec);
+  $('#ind').innerHTML = opts(inds, inds.includes(ind) ? ind : '');
+  const subs = uniq(s => s.sub, s => (!sec || s.sec === sec) && (!$('#ind').value || s.ind === $('#ind').value));
+  $('#sub').innerHTML = opts(subs, subs.includes(sub) ? sub : '');
+}
+
+function compute() {
+  const metric = $('#metric').value, years = +$('#win').value, top = +$('#top').value,
+        sec = $('#sec').value, ind = $('#ind').value, sub = $('#sub').value, q = $('#q').value.trim().toLowerCase();
+  ROWS = STK.stocks.filter(s => (!top || s.r <= top) && (!sec || s.sec === sec) && (!ind || s.ind === ind) &&
+                                (!sub || s.sub === sub) && (!q || s.t.toLowerCase().includes(q) || s.n.toLowerCase().includes(q)))
+    .map(s => ({s, st: rowStats(s, metric, years)}))
+    .filter(r => r.st);
+  render();
+}
+
+const COLS = [
+  ['t', 'Ticker', r => r.s.t], ['n', 'Name', r => r.s.n], ['r', 'Rank', r => r.s.r], ['cap', 'Mkt cap', r => r.s.cap],
+  ['cur', 'Current', r => r.st.cur], ['z', 'Z-score', r => r.st.z], ['pct', 'Percentile', r => r.st.pct],
+  ['mean', 'Mean', r => r.st.mean], ['sd', 'Std dev', r => r.st.sd],
+  ['min', 'Min', r => r.st.min], ['max', 'Max', r => r.st.max], ['days', 'Days', r => r.st.n],
+  ['sec', 'Sector', r => r.s.sec], ['ind', 'Industry', r => r.s.ind], ['sub', 'Sub-industry', r => r.s.sub],
+];
+const TEXT = ['t', 'n', 'sec', 'ind', 'sub'];
+function render() {
+  const get = COLS.find(c => c[0] === SORT.key)[2];
+  ROWS.sort((a, b) => {
+    const x = get(a), y = get(b);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return (typeof x === 'string' ? x.localeCompare(y) : x - y) * SORT.dir;
+  });
+  const head = COLS.map(([k, lbl], i) => `<th class="sort${i === 0 ? ' lbl' : ''}${SORT.key === k ? ' on' : ''}" data-k="${k}">${
+    lbl}${SORT.key === k ? (SORT.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('');
+  const shown = ROWS.slice(0, 1600);
+  const body = shown.map(r => {
+    const s = r.s, st = r.st, stale = st.lastDay - st.curDay > 35;
+    const gics = esc(`${s.sec} › ${s.ind} › ${s.sub}`);
+    return `<tr class="pick${s.f === SEL ? ' sel' : ''}" data-id="${s.f}">
+      <td class="lbl" title="${esc(s.n)}"><b>${esc(s.t)}</b></td>
+      <td class="nm" title="${esc(s.n)}">${esc(s.n)}</td><td>${s.r}</td><td>${capFmt(s.cap)}</td>
+      <td class="${stale ? 'stale' : ''}" ${stale ? `title="last value ${isoDay(st.curDay)}"` : ''}>${f1(st.cur)}</td>
+      <td style="background:${heat(st.z, 2.5)}"><b>${f2(st.z)}</b></td>
+      <td style="background:${heat(st.pct == null ? null : st.pct - .5, .5)}">${st.pct == null ? '' : (st.pct * 100).toFixed(0) + '%'}</td>
+      <td>${f1(st.mean)}</td><td>${f1(st.sd)}</td>
+      <td>${f1(st.min)}</td><td>${f1(st.max)}</td><td>${st.n}</td>
+      <td class="grp" title="${gics}" style="white-space:nowrap">${esc(s.sec)}</td>
+      <td class="grp" title="${gics}" style="white-space:nowrap">${esc(s.ind)}</td>
+      <td class="grp" title="${gics}" style="white-space:nowrap">${esc(s.sub)}</td></tr>`;
+  }).join('');
+  $('#tab').innerHTML = `<thead><tr class="hdr">${head}</tr></thead><tbody>${body ||
+    `<tr><td class="lbl muted" colspan="${COLS.length}">No stocks match.</td></tr>`}</tbody>`;
+  const zs = ROWS.map(r => r.st.z).filter(z => z != null);
+  const rich = zs.filter(z => z >= 1).length, cheap = zs.filter(z => z <= -1).length;
+  $('#tab-legend').innerHTML = `<span>${ROWS.length} stocks</span><span>z ≥ +1: <b>${rich}</b></span>
+    <span>z ≤ −1: <b>${cheap}</b></span><span>median z ${zs.length ? f2(zs.sort((a, b) => a - b)[zs.length >> 1]) : '—'}</span>`;
+  document.querySelectorAll('#tab th.sort').forEach(th => th.onclick = () => {
+    const k = th.dataset.k;
+    SORT = SORT.key === k ? {key: k, dir: -SORT.dir} : {key: k, dir: TEXT.includes(k) || k === 'r' ? 1 : -1};
+    render();
+  });
+  document.querySelectorAll('#tab tr.pick').forEach(tr => tr.onclick = () => {
+    if (tr.dataset.id !== SEL) YR = {lo: null, hi: null};
+    SEL = tr.dataset.id; save(); render(); detail();
+  });
+}
+
+/* ---------- one stock's daily history, fetched on click; multiples derived from the levels ---------- */
+const CACHE = {}, MDEF = {pe: ['px', 'eps'], pe_gaap: ['px', 'epsg'], pb: ['px', 'bps'], ev_sales: ['ev', 'sales'],
+                          ev_ebitda: ['ev', 'ebitda'], ev_ebit: ['ev', 'ebit'], ev_fcf: ['ev', 'fcf']};
+async function load(f) {
+  if (CACHE[f]) return CACHE[f];
+  const s = await fetch('/api/stock/' + encodeURIComponent(f)).then(r => r.json());
+  if (s.error) throw new Error(s.error);
+  const n = s.dd.length, d = new Int32Array(n);
+  let day = s.d0;
+  for (let i = 0; i < n; i++) { day += s.dd[i]; d[i] = day; }
+  const x = {};
+  for (const [k, arr] of Object.entries(s.x || {})) {
+    let acc = 0;
+    x[k] = arr.map(v => v == null ? null : (acc += v) / STK.scale);
+  }
+  const m = {};
+  for (const [k, [a, b]] of Object.entries(MDEF)) {
+    if (!x[a] || !x[b]) continue;
+    m[k] = x[a].map((v, i) => v > 0 && x[b][i] > 0 ? v / x[b][i] : null);
+  }
+  return CACHE[f] = {d, m, x};
+}
+const hist = sid => CACHE[sid] || null;
+
+/* the statistics for one stock and metric over the trailing window (detail panel, from the loaded history) */
+function stats(sid, metric, years) {
+  const h = hist(sid);
+  if (!h || !h.m[metric]) return null;
+  const v = h.m[metric], d = h.d, lastDay = d[d.length - 1];
+  let ci = v.length - 1;
+  while (ci >= 0 && v[ci] == null) ci--;
+  if (ci < 0) return null;
+  const cur = v[ci], from = years ? lastDay - Math.round(years * 365.25) : -Infinity;
+  const xs = [];
+  let first = null;
+  for (let i = 0; i < v.length; i++) if (d[i] >= from && v[i] != null) { xs.push(v[i]); if (first == null) first = d[i]; }
+  if (xs.length < 126) return {cur, curDay: d[ci], lastDay, n: xs.length, first};
+  const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+  const sd = Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / (xs.length - 1));
+  const below = xs.filter(x => x <= cur).length;
+  return {cur, curDay: d[ci], lastDay, n: xs.length, first, mean, sd,
+          z: sd ? (cur - mean) / sd : null, pct: below / xs.length,
+          min: Math.min(...xs), max: Math.max(...xs)};
+}
+
+async function detail() {
+  const s = STK.stocks.find(x => x.f === SEL), box = $('#detail');
+  if (!s) { box.innerHTML = '<div class="muted">Pick a row.</div>'; return; }
+  box.innerHTML = `<h2>${esc(s.n)}</h2><div class="muted">loading ${esc(s.t)}…</div>`;
+  try { await load(SEL); } catch (e) { box.innerHTML = `<div class="err">${esc(s.t)}: ${esc(e.message)}</div>`; return; }
+  if (s.f !== SEL) return;                       // another row was clicked meanwhile
+  const years = +$('#win').value, metric = $('#metric').value, h = hist(SEL);
+  const rows = VAL.metrics.map(m => ({m, st: stats(SEL, m.id, years)})).filter(r => r.st);
+  const st = stats(SEL, metric, years);
+  box.innerHTML = `
+    <h2>${esc(s.n)} <span class="small">${$('#win').selectedOptions[0].textContent}</span></h2>
+    <div class="hint" style="margin:2px 0 8px"><b>${esc(s.t)} US Equity</b> · #${s.r} by market cap ($${capFmt(s.cap)}) ·
+      ${esc(s.sec)} › ${esc(s.ind)} › ${esc(s.sub)}</div>
+    ${st ? `<div class="cond" style="margin:0 0 6px;gap:6px">
+      <label class="opt">Y axis <input type="number" id="ymin" step="any" placeholder="auto" style="width:72px"></label>
+      <label class="opt">to <input type="number" id="ymax" step="any" placeholder="auto" style="width:72px"></label>
+      <button id="ysig" title="mean ± 3 standard deviations">±3σ</button>
+      <button id="yauto">Auto</button>
+    </div>
+    <svg id="hist"></svg>
+    <div class="legend">
+      <span><span class="key" style="border-color:var(--accent)"></span>${$('#metric').selectedOptions[0].textContent}</span>
+      <span><span class="key dash" style="border-color:var(--text-secondary)"></span>mean</span>
+      <span><span class="band" style="background:color-mix(in srgb,var(--text-muted) 22%,transparent)"></span>±1σ</span>
+      <span><span class="band" style="background:color-mix(in srgb,var(--text-muted) 10%,transparent)"></span>±2σ</span>
+    </div>` : `<div class="muted">No ${$('#metric').selectedOptions[0].textContent} history (losses or no estimate).</div>`}
+    ${h.x.px ? `
+    <h2 style="margin-top:14px">${{pe: 'Forward EPS, price &amp; ', pb: 'Book value, price &amp; ', pe_gaap: 'GAAP EPS, price &amp; ',
+      ev_sales: 'Sales, EV &amp; ', ev_ebitda: 'EBITDA, EV &amp; ', ev_ebit: 'EBIT, EV &amp; ', ev_fcf: 'FCF, EV &amp; '}[metric] || 'Price &amp; '}${
+      $('#metric').selectedOptions[0].textContent} <span class="small">${$('#win').selectedOptions[0].textContent}</span></h2>
+    <div class="legend" id="trend-chg"></div>
+    <svg id="trend" style="width:100%;height:480px;display:block"></svg>
+    <div class="hint">Follows the Metric picker. Forward EPS / sales / EBITDA / EBIT / FCF = Bloomberg BEst, blended
+      next-12-month consensus; GAAP EPS = price ÷ GAAP P/E; book value / share = price ÷ P/B. EV and the EV fundamentals
+      are in USD millions. ▼ / ▲ mark major cycle peaks / troughs (a turn of at least 20%, 12% for the fundamental).</div>` : ''}
+    <div class="scroll" style="margin-top:10px"><table>
+      <thead><tr class="hdr"><th class="lbl">Metric</th><th>Current</th><th>Mean</th><th>Z</th><th>Pctile</th></tr></thead>
+      <tbody>${rows.map(({m, st}) => `<tr class="${m.id === metric ? 'sel' : ''}">
+        <td class="lbl">${m.label}</td><td>${f1(st.cur)}</td><td>${f1(st.mean)}</td>
+        <td style="background:${heat(st.z, 2.5)}">${f2(st.z)}</td>
+        <td style="background:${heat(st.pct == null ? null : st.pct - .5, .5)}">${st.pct == null ? '' : (st.pct * 100).toFixed(0) + '%'}</td></tr>`).join('')}
+      </tbody></table></div>
+    <div class="hint">${st && st.first != null ? `History from ${isoDay(st.first)} to ${isoDay(st.lastDay)}, ${st.n} trading days.` : ''}</div>`;
+  if (st) {
+    const yin = () => {
+      const a = $('#ymin').value.trim(), b = $('#ymax').value.trim();
+      YR = {lo: a === '' ? null : +a, hi: b === '' ? null : +b};
+      drawHist(SEL, $('#metric').value, +$('#win').value);
+    };
+    $('#ymin').value = YR.lo ?? ''; $('#ymax').value = YR.hi ?? '';
+    $('#ymin').oninput = $('#ymax').oninput = yin;
+    $('#yauto').onclick = () => { $('#ymin').value = $('#ymax').value = ''; yin(); };
+    $('#ysig').onclick = () => {
+      const s3 = stats(SEL, $('#metric').value, +$('#win').value);
+      if (!s3 || !s3.sd) return;
+      $('#ymin').value = +(s3.mean - 3 * s3.sd).toFixed(2); $('#ymax').value = +(s3.mean + 3 * s3.sd).toFixed(2); yin();
+    };
+    drawHist(SEL, metric, years);
+  }
+  drawTrend(SEL, years);
+}
+
+/* ---------- trend: forward EPS / price / forward P/E, stacked, shared date axis ---------- */
+function drawTrend(sid, years) {
+  const svg = $('#trend'), h = hist(sid);
+  if (!svg || !h || !h.x.px) return;
+  const lastDay = h.d[h.d.length - 1], from = years ? lastDay - Math.round(years * 365.25) : -Infinity;
+  const idx = [];
+  for (let i = 0; i < h.d.length; i++) if (h.d[i] >= from) idx.push(i);
+  if (idx.length < 2) return;
+  // panels follow the Metric picker: [fundamental,] price, multiple
+  const M = $('#metric').value, mv = h.m[M] || [], px = h.x.px;
+  const mlbl = (VAL.metrics.find(x => x.id === M) || {}).label || M;
+  const implied = () => px.map((p, i) => p != null && mv[i] > 0 ? p / mv[i] : null);   // price ÷ multiple
+  // EV multiples: forward sales / EBITDA / EBIT and EV, all on the index's per-share (point) scale
+  const EVF = {ev_sales: ['sales', 'Forward sales'], ev_ebitda: ['ebitda', 'Forward EBITDA'], ev_ebit: ['ebit', 'Forward EBIT'],
+               ev_fcf: ['fcf', 'Forward FCF']};
+  const evm = EVF[M] && h.x.ev ? EVF[M] : null;
+  const fund = M === 'pe' && h.x.eps ? {lbl: 'Forward EPS', v: h.x.eps}
+             : M === 'pb' ? {lbl: 'Book value / share', v: implied()}
+             : M === 'pe_gaap' ? {lbl: 'GAAP EPS', v: implied()}
+             : evm && h.x[evm[0]] ? {lbl: evm[1], v: h.x[evm[0]]} : null;
+  const panels = [
+    ...(fund ? [{k: 'fund', lbl: fund.lbl, v: fund.v, col: 'var(--pos)', log: true, swing: .12}] : []),
+    evm ? {k: 'px', lbl: 'Enterprise value', v: h.x.ev, col: 'var(--accent)', log: true, swing: .20}
+        : {k: 'px', lbl: 'Price', v: px, col: 'var(--accent)', log: true, swing: .20},
+    {k: 'mult', lbl: mlbl, v: mv, col: 'var(--neg)', swing: .20},
+  ];
+  const NP = panels.length;
+  /* major cycle peaks/troughs: zigzag -- a peak is confirmed once the series falls `swing` from it,
+     a trough once it rises `swing` (in log terms, so a 20% fall and a 25% rise are the same move).
+     Series with values <= 0 use an absolute move of `swing` x the window's range. The swing is
+     raised until there are at most MAXPIV pivots; the last, unconfirmed leg is not labelled. */
+  const MAXPIV = 8;
+  const pivots = (v, swing) => {
+    const pts = idx.filter(i => v[i] != null);
+    if (pts.length < 3) return [];
+    const pos = pts.every(i => v[i] > 0);
+    const t = i => pos ? Math.log(v[i]) : v[i];
+    const span = pos ? 0 : Math.max(...pts.map(t)) - Math.min(...pts.map(t));
+    let th = pos ? -Math.log(1 - swing) : swing * span, out;
+    for (let tries = 0; tries < 12; tries++, th *= 1.25) {
+      out = [];
+      let dir = 0, hiI = pts[0], loI = pts[0], ext = pts[0];
+      for (const i of pts) {
+        if (dir === 0) {
+          if (t(i) > t(hiI)) hiI = i;
+          if (t(i) < t(loI)) loI = i;
+          if (t(i) - t(loI) >= th) { out.push({i: loI, top: false}); dir = 1; ext = i; }
+          else if (t(hiI) - t(i) >= th) { out.push({i: hiI, top: true}); dir = -1; ext = i; }
+        } else if (dir === 1) {
+          if (t(i) > t(ext)) ext = i;
+          else if (t(ext) - t(i) >= th) { out.push({i: ext, top: true}); dir = -1; ext = i; }
+        } else {
+          if (t(i) < t(ext)) ext = i;
+          else if (t(i) - t(ext) >= th) { out.push({i: ext, top: false}); dir = 1; ext = i; }
+        }
+      }
+      out = out.filter(q => h.d[q.i] - x0 > 20);      // a window-start value is not a cycle turn
+      if (out.length <= MAXPIV) break;
+    }
+    return out;
+  };
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monYr = d => { const t = new Date(d * DAY); return MON[t.getUTCMonth()] + '-' + String(t.getUTCFullYear()).slice(2); };
+  const H = NP === 3 ? 480 : 340;
+  svg.style.height = H + 'px';
+  const W = svg.clientWidth || 600, m = {t: 8, r: 14, b: 22, l: 52}, gap = 14;
+  const iw = W - m.l - m.r, ph = (H - m.t - m.b - gap * (NP - 1)) / NP;
+  const x0 = h.d[idx[0]], x1 = h.d[idx[idx.length - 1]];
+  const X = d => m.l + (d - x0) / ((x1 - x0) || 1) * iw;
+  const ticks = (lo, hi) => {
+    const raw = (hi - lo) / 3, mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+    const step = [1, 2, 2.5, 5, 10].map(k => k * mag).find(k => k >= raw) || raw;
+    const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) out.push(+v.toFixed(6)); return out;
+  };
+  // log-axis ticks: 1-2-5 per decade, denser/sparser so a panel gets ~3-6 labels
+  const logTicks = (lo, hi) => {
+    const pick = ms => { const out = [];
+      for (let e = Math.floor(Math.log10(lo)); e <= Math.ceil(Math.log10(hi)); e++)
+        for (const k of ms) { const v = k * Math.pow(10, e); if (v >= lo && v <= hi) out.push(+v.toPrecision(6)); }
+      return out; };
+    let t = pick([1, 2, 5]);
+    if (t.length < 3) t = pick([1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9]);
+    if (t.length < 2) t = ticks(lo, hi);
+    else if (t.length > 6) t = pick([1]);
+    return t;
+  };
+  const fmt = v => Math.abs(v) >= 1000 ? Math.round(v).toLocaleString() : +v.toFixed(2);
+  let html = '', chg = [];
+  panels.forEach((p, j) => {
+    const top = m.t + j * (ph + gap);
+    const vs = idx.map(i => p.v[i]).filter(v => v != null);
+    if (!vs.length) { html += `<text x="${m.l}" y="${top + ph / 2}" font-size="11" fill="var(--text-muted)">${p.lbl}: no data</text>`; p.Y = null; return; }
+    let lo = Math.min(...vs), hi = Math.max(...vs);
+    const log = p.log && lo > 0;                 // log scale needs every value > 0 (losses -> linear)
+    let Y;
+    if (log) {
+      const L = Math.log, pad = (L(hi) - L(lo)) * .06 || .05, llo = L(lo) - pad, lhi = L(hi) + pad;
+      lo = Math.exp(llo); hi = Math.exp(lhi);
+      Y = v => top + ph - (L(v) - llo) / (lhi - llo) * ph;
+    } else {
+      const pad = (hi - lo) * .06 || Math.abs(hi) * .05 || 1; lo -= pad; hi += pad;
+      Y = v => top + ph - (v - lo) / (hi - lo) * ph;
+    }
+    p.Y = Y;
+    let path = '', pen = false;
+    for (const i of idx) { const v = p.v[i]; if (v == null) { pen = false; continue; }
+      path += (pen ? 'L' : 'M') + X(h.d[i]).toFixed(1) + ' ' + Y(v).toFixed(1); pen = true; }
+    html += (log ? logTicks(lo, hi) : ticks(lo, hi)).map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--border)"/>
+      <text x="${m.l - 6}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--text-muted)">${fmt(v)}</text>`).join('');
+    if (!log && lo < 0 && hi > 0) html += `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}" stroke="var(--text-secondary)" stroke-dasharray="3 3"/>`;
+    html += `<text x="${m.l + 6}" y="${top + 12}" font-size="11" font-weight="600" fill="${p.col}">${p.lbl}${p.log ? `<tspan font-weight="400" fill="var(--text-muted)"> · ${log ? 'log' : 'linear (values ≤ 0)'}</tspan>` : ''}</text>
+      <path d="${path}" fill="none" stroke="${p.col}" stroke-width="1.5" stroke-linejoin="round"/>
+      <circle class="tdot" data-j="${j}" r="3" fill="${p.col}" style="display:none"/>`;
+    // label the major cycle peaks (▼, above the point) and troughs (▲, below), without overlaps:
+    // each label tries rows moving away from its point, then the other side; the panel title and
+    // labels already placed are taken. No free row -> circle only (its value shows on hover).
+    const taken = [{x0: m.l, x1: m.l + 10 + 6.2 * (p.lbl.length + (p.log ? 6 : 0)), y0: top, y1: top + 14}];
+    const hit = r => taken.some(t => r.x0 < t.x1 && r.x1 > t.x0 && r.y0 < t.y1 && r.y1 > t.y0);
+    for (const q of pivots(p.v, p.swing)) {
+      const cx = X(h.d[q.i]), cy = Y(p.v[q.i]);
+      const txt = `${q.top ? '▼' : '▲'} ${fmt(+p.v[q.i].toPrecision(4))} ${monYr(h.d[q.i])}`, w = txt.length * 5.5;
+      const x0r = Math.min(Math.max(cx - w / 2, m.l), W - m.r - w);
+      const dirs = q.top ? [-1, 1] : [1, -1];
+      let place = null;
+      for (const s of dirs) {
+        for (let k = 0; k < 4 && !place; k++) {
+          const base = s < 0 ? cy - 5 - k * 11 : cy + 12 + k * 11;          // text baseline
+          const r = {x0: x0r - 1, x1: x0r + w + 1, y0: base - 9, y1: base + 2};
+          if (r.y0 < top || r.y1 > top + ph + 2) break;
+          if (!hit(r)) place = {r, base};
+        }
+        if (place) break;
+      }
+      html += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="2.5" fill="var(--surface-1)" stroke="${p.col}" stroke-width="1.3"><title>${txt}</title></circle>`;
+      if (!place) continue;
+      taken.push(place.r);
+      html += `<text x="${x0r.toFixed(1)}" y="${place.base.toFixed(1)}" font-size="9" fill="var(--text-secondary)"
+          paint-order="stroke" stroke="var(--surface-1)" stroke-width="3">${txt}</text>`;
+    }
+    // change over the window: first vs last non-empty value
+    let a = null, b = null;
+    for (const i of idx) if (p.v[i] != null) { if (a == null) a = p.v[i]; b = p.v[i]; }
+    chg.push(`<span><span class="key" style="border-color:${p.col}"></span>${p.lbl} <b>${fmt(b)}</b>${
+      p.k === 'mult' ? ` (${(b - a >= 0 ? '+' : '') + (b - a).toFixed(1)} pts)` : a > 0 ? ` (${(b / a - 1 >= 0 ? '+' : '') + ((b / a - 1) * 100).toFixed(1)}%)` : ''}</span>`);
+  });
+  const y0 = new Date(x0 * DAY).getUTCFullYear(), y1 = new Date(x1 * DAY).getUTCFullYear(), ys = Math.max(1, Math.ceil((y1 - y0) / 8));
+  for (let y = y0 + 1; y <= y1; y += ys) { const d = Date.UTC(y, 0, 1) / DAY;
+    html += `<text x="${X(d).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--text-muted)">${y}</text>`; }
+  html += `<line id="tcross" y1="${m.t}" y2="${H - m.b}" stroke="var(--border-strong)" style="display:none"/>`;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = html;
+  $('#trend-chg').innerHTML = `<span class="small">change over window:</span>` + chg.join('');
+  const tip = $('#tip'), cross = svg.querySelector('#tcross'), dots = svg.querySelectorAll('.tdot');
+  svg.onmousemove = ev => {
+    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width);
+    if (px < m.l || px > W - m.r) { svg.onmouseleave(); return; }
+    const d = x0 + (px - m.l) / iw * (x1 - x0);
+    let lo = 0, hi = idx.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (h.d[idx[mid]] < d) lo = mid; else hi = mid; }
+    const i = Math.abs(h.d[idx[lo]] - d) <= Math.abs(h.d[idx[hi]] - d) ? idx[lo] : idx[hi];
+    const cx = X(h.d[i]).toFixed(1);
+    cross.style.display = ''; cross.setAttribute('x1', cx); cross.setAttribute('x2', cx);
+    dots.forEach(c => { const p = panels[+c.dataset.j], v = p.v[i];
+      if (v == null || !p.Y) { c.style.display = 'none'; return; }
+      c.style.display = ''; c.setAttribute('cx', cx); c.setAttribute('cy', p.Y(v).toFixed(1)); });
+    tip.style.display = 'block';
+    tip.innerHTML = `<b>${isoDay(h.d[i])}</b>` + panels.map(p => `<br>${p.lbl}: ${p.v[i] == null ? '—' : fmt(p.v[i])}`).join('');
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 190) + 'px';
+    tip.style.top = (ev.clientY - 10) + 'px';
+  };
+  svg.onmouseleave = () => { tip.style.display = 'none'; cross.style.display = 'none'; dots.forEach(c => c.style.display = 'none'); };
+}
+
+function drawHist(sid, metric, years) {
+  const svg = $('#hist'), h = hist(sid), st = stats(sid, metric, years);
+  if (!svg || !h || !h.m[metric] || !st) return;
+  const from = years ? st.lastDay - Math.round(years * 365.25) : -Infinity;
+  const pts = [];
+  for (let i = 0; i < h.d.length; i++) if (h.d[i] >= from) pts.push([h.d[i], h.m[metric][i]]);
+  const W = svg.clientWidth || 600, H = 300, m = {t: 12, r: 14, b: 22, l: 46};
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const vals = pts.map(p => p[1]).filter(v => v != null);
+  const bands = st.sd ? [st.mean - 2 * st.sd, st.mean + 2 * st.sd] : [];
+  let lo = Math.min(...vals, ...bands), hi = Math.max(...vals, ...bands);
+  const pad = (hi - lo) * .05 || 1; lo -= pad; hi += pad;
+  // manual range from the Y-axis boxes (either end may stay auto); ignored if it is inverted
+  const mlo = Number.isFinite(YR.lo) ? YR.lo : lo, mhi = Number.isFinite(YR.hi) ? YR.hi : hi;
+  if (mhi > mlo) { lo = mlo; hi = mhi; }
+  const x0 = pts[0][0], x1 = pts[pts.length - 1][0];
+  const X = d => m.l + (d - x0) / ((x1 - x0) || 1) * iw;
+  const Y = v => m.t + ih - (v - lo) / (hi - lo) * ih;
+  let path = '', pen = false;
+  for (const [d, v] of pts) {
+    if (v == null) { pen = false; continue; }
+    path += (pen ? 'L' : 'M') + X(d).toFixed(1) + ' ' + Y(v).toFixed(1); pen = true;
+  }
+  const rawStep = (hi - lo) / 5, mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const step = [1, 2, 2.5, 5, 10].map(k => k * mag).find(k => k >= rawStep);
+  const yt = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) yt.push(+v.toFixed(6));
+  const y0 = new Date(x0 * DAY).getUTCFullYear(), y1 = new Date(x1 * DAY).getUTCFullYear();
+  const ys = Math.max(1, Math.ceil((y1 - y0) / 8));
+  const xt = [];
+  for (let y = y0 + 1; y <= y1; y += ys) xt.push([y, Date.UTC(y, 0, 1) / DAY]);
+  const band = (a, b, op) => st.sd ? `<rect x="${m.l}" width="${iw}" y="${Y(b).toFixed(1)}" height="${(Y(a) - Y(b)).toFixed(1)}"
+      fill="color-mix(in srgb,var(--text-muted) ${op}%,transparent)"/>` : '';
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const curIn = st.cur >= lo && st.cur <= hi;
+  svg.innerHTML =
+    `<defs><clipPath id="hclip"><rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}"/></clipPath></defs><g clip-path="url(#hclip)">` +
+    band(st.mean - 2 * st.sd, st.mean + 2 * st.sd, 10) + band(st.mean - st.sd, st.mean + st.sd, 22) + '</g>' +
+    yt.map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--border)"/>
+      <text x="${m.l - 6}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--text-muted)">${+v.toFixed(2)}</text>`).join('') +
+    xt.map(([y, d]) => `<text x="${X(d).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--text-muted)">${y}</text>`).join('') +
+    '<g clip-path="url(#hclip)">' +
+    (st.sd ? `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(st.mean).toFixed(1)}" y2="${Y(st.mean).toFixed(1)}"
+      stroke="var(--text-secondary)" stroke-dasharray="5 4"/>` : '') +
+    `<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round"/></g>` +
+    (curIn ? `<circle cx="${X(st.curDay).toFixed(1)}" cy="${Y(st.cur).toFixed(1)}" r="3.5" fill="var(--accent)"/>` : '') +
+    `<line id="hcross" y1="${m.t}" y2="${m.t + ih}" stroke="var(--border-strong)" style="display:none"/>`;
+  const tip = $('#tip'), cross = svg.querySelector('#hcross');
+  svg.onmousemove = ev => {
+    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width);
+    const d = x0 + (px - m.l) / iw * (x1 - x0);
+    let best = null;
+    for (const p of pts) if (p[1] != null && (!best || Math.abs(p[0] - d) < Math.abs(best[0] - d))) best = p;
+    if (!best || px < m.l || px > W - m.r) { tip.style.display = 'none'; cross.style.display = 'none'; return; }
+    cross.style.display = ''; cross.setAttribute('x1', X(best[0])); cross.setAttribute('x2', X(best[0]));
+    const z = st.sd ? (best[1] - st.mean) / st.sd : null;
+    tip.style.display = 'block';
+    tip.innerHTML = `<b>${isoDay(best[0])}</b><br>${best[1].toFixed(2)}${z == null ? '' : ` · z ${z.toFixed(2)}`}`;
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 170) + 'px';
+    tip.style.top = (ev.clientY - 10) + 'px';
+  };
+  svg.onmouseleave = () => { tip.style.display = 'none'; cross.style.display = 'none'; };
+}
+
+function save() {
+  try { localStorage.setItem('stocks.state', JSON.stringify({m: $('#metric').value, w: $('#win').value, top: $('#top').value,
+        sec: $('#sec').value, ind: $('#ind').value, sub: $('#sub').value, sel: SEL})); } catch (e) {}
+}
+['#metric', '#win', '#top'].forEach(id => $(id).onchange = () => {
+  if (id === '#metric') YR = {lo: null, hi: null};   // other metric = other scale
+  save(); compute(); if (id !== '#top') detail();
+});
+['#sec', '#ind', '#sub'].forEach(id => $(id).onchange = () => { fillGics(); save(); compute(); });
+$('#q').oninput = compute;
+$('#csv').onclick = () => {
+  const q = v => v == null ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v;
+  let out = ['ticker', 'name', 'rank', 'mkt_cap_bn', 'sector', 'industry', 'sub_industry', 'metric', 'history', 'current',
+             'current_date', 'mean', 'sd', 'z', 'percentile', 'min', 'max', 'days'].join(',') + '\n';
+  for (const r of ROWS) {
+    const s = r.s, st = r.st;
+    out += [s.t, s.n, s.r, s.cap, s.sec, s.ind, s.sub, $('#metric').value, $('#win').selectedOptions[0].textContent, st.cur,
+      isoDay(st.curDay), st.mean, st.sd, st.z, st.pct, st.min, st.max, st.n].map(q).join(',') + '\n';
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([out], {type: 'text/csv'}));
+  a.download = `stocks_${$('#metric').value}.csv`; a.click();
+};
+let rzTimer;
+addEventListener('resize', () => { clearTimeout(rzTimer); rzTimer = setTimeout(() => { if (SEL && hist(SEL)) { drawHist(SEL, $('#metric').value, +$('#win').value); drawTrend(SEL, +$('#win').value); } }, 150); });
+
+(async () => {
+  STK = await fetch('/api/stocks').then(r => r.json());
+  if (STK.error) { $('#tab').innerHTML = `<tr><td class="err">${STK.error}</td></tr>`; $('#p-data').textContent = 'no stock data'; return; }
+  STK.metrics = STK.metrics.filter(m => STK.stocks.some(s => s.s[m.id]));
+  VAL = {metrics: STK.metrics};                  // drawTrend reads metric labels from VAL
+  $('#metric').innerHTML = STK.metrics.map(m => `<option value="${m.id}">${m.label}</option>`).join('');
+  let st = {};
+  try { st = JSON.parse(localStorage.getItem('stocks.state') || '{}'); } catch (e) {}
+  if (st.m && STK.metrics.some(m => m.id === st.m)) $('#metric').value = st.m;
+  if (st.w != null) $('#win').value = st.w;
+  if (st.top != null) $('#top').value = st.top;
+  fillGics();
+  for (const k of ['sec', 'ind', 'sub']) if (st[k]) { $('#' + k).value = st[k]; fillGics(); }
+  SEL = st.sel && STK.stocks.some(s => s.f === st.sel) ? st.sel : (STK.stocks[0] || {}).f;
+  const last = Math.max(...STK.stocks.map(s => s.last));
+  $('#p-data').innerHTML = `${STK.stocks.length} stocks · valuations through <b>${isoDay(last)}</b> <span class="muted">· ${STK.source}</span>`;
+  compute(); detail();
+})();
+</script>
+</body>
+</html>
