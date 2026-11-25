@@ -134,11 +134,13 @@ function hist(sid) {
   for (let i = 0; i < n; i++) { day += s.dd[i]; d[i] = day; }
   const m = {};
   for (const [k, arr] of Object.entries(s.m)) {          // x100 ints, delta vs the previous non-empty value
+    if (!Array.isArray(arr)) continue;
     let acc = 0;
     m[k] = arr.map(v => v == null ? null : (VAL.delta ? (acc += v) : v) / VAL.scale);
   }
   const x = {};                                           // levels: price, forward EPS (same encoding)
   for (const [k, arr] of Object.entries(s.x || {})) {
+    if (!Array.isArray(arr)) continue;                    // a level the index doesn't have
     let acc = 0;
     x[k] = arr.map(v => v == null ? null : (VAL.delta ? (acc += v) : v) / VAL.scale);
   }
@@ -247,13 +249,14 @@ function detail() {
       <span><span class="band" style="background:color-mix(in srgb,var(--text-muted) 10%,transparent)"></span>±2σ</span>
     </div>
     ${VAL.series[SEL].x && VAL.series[SEL].x.px ? `
-    <h2 style="margin-top:14px">${{pe: 'Forward EPS, price &amp; ', pb: 'Book value, price &amp; ', pe_gaap: 'GAAP EPS, price &amp; '}[metric] || 'Price &amp; '}${
+    <h2 style="margin-top:14px">${{pe: 'Forward EPS, price &amp; ', pb: 'Book value, price &amp; ', pe_gaap: 'GAAP EPS, price &amp; ',
+      ev_sales: 'Sales, EV &amp; ', ev_ebitda: 'EBITDA, EV &amp; ', ev_ebit: 'EBIT, EV &amp; '}[metric] || 'Price &amp; '}${
       $('#metric').selectedOptions[0].textContent} <span class="small">${$('#win').selectedOptions[0].textContent}</span></h2>
     <div class="legend" id="trend-chg"></div>
     <svg id="trend" style="width:100%;height:480px;display:block"></svg>
     <div class="hint">Follows the Metric picker. Forward EPS = Bloomberg BEst EPS, blended next-12-month consensus;
-      book value / share = price ÷ P/B. EV multiples show price and the multiple only (the data has no EV or per-share
-      sales/EBITDA/EBIT). ▼ / ▲ mark major cycle peaks / troughs: a turn of at least 20% (12% for EPS / book value)
+      book value / share = price ÷ P/B. EV multiples show forward sales / EBITDA / EBIT (BEst, blended 12M) and
+      enterprise value, all on the index's per-share point scale, so EV ÷ sales = EV/Sales. ▼ / ▲ mark major cycle peaks / troughs: a turn of at least 20% (12% for EPS / book value)
       before the opposite move, fewer if a window would get more than 8; the latest, unfinished leg is not marked.</div>` : ''}
     <div class="scroll" style="margin-top:10px"><table>
       <thead><tr class="hdr"><th class="lbl">Metric</th><th>Current</th><th>Mean</th><th>Z</th><th>Pctile</th></tr></thead>
@@ -292,12 +295,18 @@ function drawTrend(sid, years) {
   const M = $('#metric').value, mv = h.m[M] || [], px = h.x.px;
   const mlbl = (VAL.metrics.find(x => x.id === M) || {}).label || M;
   const implied = () => px.map((p, i) => p != null && mv[i] > 0 ? p / mv[i] : null);   // price ÷ multiple
+  // EV multiples: forward sales / EBITDA / EBIT and EV, all on the index's per-share (point) scale
+  const EVF = {ev_sales: ['sales', 'Forward sales'], ev_ebitda: ['ebitda', 'Forward EBITDA'], ev_ebit: ['ebit', 'Forward EBIT'],
+               ev_fcf: ['fcf', 'Forward FCF']};
+  const evm = EVF[M] && h.x.ev ? EVF[M] : null;
   const fund = M === 'pe' && h.x.eps ? {lbl: 'Forward EPS', v: h.x.eps}
              : M === 'pb' ? {lbl: 'Book value / share', v: implied()}
-             : M === 'pe_gaap' ? {lbl: 'GAAP EPS', v: implied()} : null;
+             : M === 'pe_gaap' ? {lbl: 'GAAP EPS', v: implied()}
+             : evm && h.x[evm[0]] ? {lbl: evm[1], v: h.x[evm[0]]} : null;
   const panels = [
     ...(fund ? [{k: 'fund', lbl: fund.lbl, v: fund.v, col: 'var(--pos)', log: true, swing: .12}] : []),
-    {k: 'px', lbl: 'Price', v: px, col: 'var(--accent)', log: true, swing: .20},
+    evm ? {k: 'px', lbl: 'Enterprise value', v: h.x.ev, col: 'var(--accent)', log: true, swing: .20}
+        : {k: 'px', lbl: 'Price', v: px, col: 'var(--accent)', log: true, swing: .20},
     {k: 'mult', lbl: mlbl, v: mv, col: 'var(--neg)', swing: .20},
   ];
   const NP = panels.length;
