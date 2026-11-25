@@ -136,7 +136,12 @@ function hist(sid) {
     let acc = 0;
     m[k] = arr.map(v => v == null ? null : (VAL.delta ? (acc += v) : v) / VAL.scale);
   }
-  return CACHE[sid] = {d, m};
+  const x = {};                                           // levels: price, forward EPS (same encoding)
+  for (const [k, arr] of Object.entries(s.x || {})) {
+    let acc = 0;
+    x[k] = arr.map(v => v == null ? null : (VAL.delta ? (acc += v) : v) / VAL.scale);
+  }
+  return CACHE[sid] = {d, m, x};
 }
 
 /* the statistics for one series and metric over the trailing window */
@@ -240,6 +245,12 @@ function detail() {
       <span><span class="band" style="background:color-mix(in srgb,var(--text-muted) 22%,transparent)"></span>±1σ</span>
       <span><span class="band" style="background:color-mix(in srgb,var(--text-muted) 10%,transparent)"></span>±2σ</span>
     </div>
+    ${VAL.series[SEL].x && VAL.series[SEL].x.px && VAL.series[SEL].x.eps ? `
+    <h2 style="margin-top:14px">Forward EPS, price &amp; forward P/E <span class="small">${$('#win').selectedOptions[0].textContent}</span></h2>
+    <div class="legend" id="trend-chg"></div>
+    <svg id="trend" style="width:100%;height:390px;display:block"></svg>
+    <div class="hint">Forward EPS = Bloomberg BEst EPS, blended next-12-month consensus. Forward P/E = price ÷ forward EPS
+      (blank while forward EPS ≤ 0). The three panels share the date axis.</div>` : ''}
     <div class="scroll" style="margin-top:10px"><table>
       <thead><tr class="hdr"><th class="lbl">Metric</th><th>Current</th><th>Mean</th><th>Z</th><th>Pctile</th></tr></thead>
       <tbody>${rows.map(({m, st}) => `<tr class="${m.id === metric ? 'sel' : ''}">
@@ -262,6 +273,81 @@ function detail() {
     $('#ymin').value = +(s3.mean - 3 * s3.sd).toFixed(2); $('#ymax').value = +(s3.mean + 3 * s3.sd).toFixed(2); yin();
   };
   drawHist(SEL, metric, years);
+  drawTrend(SEL, years);
+}
+
+/* ---------- trend: forward EPS / price / forward P/E, stacked, shared date axis ---------- */
+function drawTrend(sid, years) {
+  const svg = $('#trend'), h = hist(sid);
+  if (!svg || !h || !h.x.px || !h.x.eps) return;
+  const lastDay = h.d[h.d.length - 1], from = years ? lastDay - Math.round(years * 365.25) : -Infinity;
+  const idx = [];
+  for (let i = 0; i < h.d.length; i++) if (h.d[i] >= from) idx.push(i);
+  if (idx.length < 2) return;
+  const pe = h.m.pe || [];
+  const panels = [
+    {k: 'eps', lbl: 'Forward EPS', v: h.x.eps, col: 'var(--pos)'},
+    {k: 'px', lbl: 'Price', v: h.x.px, col: 'var(--accent)'},
+    {k: 'pe', lbl: 'Forward P/E', v: pe, col: 'var(--neg)'},
+  ];
+  const W = svg.clientWidth || 600, H = 390, m = {t: 8, r: 14, b: 22, l: 52}, gap = 14;
+  const iw = W - m.l - m.r, ph = (H - m.t - m.b - gap * 2) / 3;
+  const x0 = h.d[idx[0]], x1 = h.d[idx[idx.length - 1]];
+  const X = d => m.l + (d - x0) / ((x1 - x0) || 1) * iw;
+  const ticks = (lo, hi) => {
+    const raw = (hi - lo) / 3, mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+    const step = [1, 2, 2.5, 5, 10].map(k => k * mag).find(k => k >= raw) || raw;
+    const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) out.push(+v.toFixed(6)); return out;
+  };
+  const fmt = v => Math.abs(v) >= 1000 ? Math.round(v).toLocaleString() : +v.toFixed(2);
+  let html = '', chg = [];
+  panels.forEach((p, j) => {
+    const top = m.t + j * (ph + gap);
+    const vs = idx.map(i => p.v[i]).filter(v => v != null);
+    if (!vs.length) { html += `<text x="${m.l}" y="${top + ph / 2}" font-size="11" fill="var(--text-muted)">${p.lbl}: no data</text>`; p.Y = null; return; }
+    let lo = Math.min(...vs), hi = Math.max(...vs); const pad = (hi - lo) * .06 || Math.abs(hi) * .05 || 1; lo -= pad; hi += pad;
+    const Y = v => top + ph - (v - lo) / (hi - lo) * ph; p.Y = Y;
+    let path = '', pen = false;
+    for (const i of idx) { const v = p.v[i]; if (v == null) { pen = false; continue; }
+      path += (pen ? 'L' : 'M') + X(h.d[i]).toFixed(1) + ' ' + Y(v).toFixed(1); pen = true; }
+    html += ticks(lo, hi).map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--border)"/>
+      <text x="${m.l - 6}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--text-muted)">${fmt(v)}</text>`).join('');
+    if (lo < 0 && hi > 0) html += `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}" stroke="var(--text-secondary)" stroke-dasharray="3 3"/>`;
+    html += `<text x="${m.l + 6}" y="${top + 12}" font-size="11" font-weight="600" fill="${p.col}">${p.lbl}</text>
+      <path d="${path}" fill="none" stroke="${p.col}" stroke-width="1.5" stroke-linejoin="round"/>
+      <circle class="tdot" data-j="${j}" r="3" fill="${p.col}" style="display:none"/>`;
+    // change over the window: first vs last non-empty value
+    let a = null, b = null;
+    for (const i of idx) if (p.v[i] != null) { if (a == null) a = p.v[i]; b = p.v[i]; }
+    chg.push(`<span><span class="key" style="border-color:${p.col}"></span>${p.lbl} <b>${fmt(b)}</b>${
+      p.k === 'pe' ? ` (${(b - a >= 0 ? '+' : '') + (b - a).toFixed(1)} pts)` : a > 0 ? ` (${(b / a - 1 >= 0 ? '+' : '') + ((b / a - 1) * 100).toFixed(1)}%)` : ''}</span>`);
+  });
+  const y0 = new Date(x0 * DAY).getUTCFullYear(), y1 = new Date(x1 * DAY).getUTCFullYear(), ys = Math.max(1, Math.ceil((y1 - y0) / 8));
+  for (let y = y0 + 1; y <= y1; y += ys) { const d = Date.UTC(y, 0, 1) / DAY;
+    html += `<text x="${X(d).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--text-muted)">${y}</text>`; }
+  html += `<line id="tcross" y1="${m.t}" y2="${H - m.b}" stroke="var(--border-strong)" style="display:none"/>`;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = html;
+  $('#trend-chg').innerHTML = `<span class="small">change over window:</span>` + chg.join('');
+  const tip = $('#tip'), cross = svg.querySelector('#tcross'), dots = svg.querySelectorAll('.tdot');
+  svg.onmousemove = ev => {
+    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width);
+    if (px < m.l || px > W - m.r) { svg.onmouseleave(); return; }
+    const d = x0 + (px - m.l) / iw * (x1 - x0);
+    let lo = 0, hi = idx.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (h.d[idx[mid]] < d) lo = mid; else hi = mid; }
+    const i = Math.abs(h.d[idx[lo]] - d) <= Math.abs(h.d[idx[hi]] - d) ? idx[lo] : idx[hi];
+    const cx = X(h.d[i]).toFixed(1);
+    cross.style.display = ''; cross.setAttribute('x1', cx); cross.setAttribute('x2', cx);
+    dots.forEach(c => { const p = panels[+c.dataset.j], v = p.v[i];
+      if (v == null || !p.Y) { c.style.display = 'none'; return; }
+      c.style.display = ''; c.setAttribute('cx', cx); c.setAttribute('cy', p.Y(v).toFixed(1)); });
+    tip.style.display = 'block';
+    tip.innerHTML = `<b>${isoDay(h.d[i])}</b>` + panels.map(p => `<br>${p.lbl}: ${p.v[i] == null ? '—' : fmt(p.v[i])}`).join('');
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 190) + 'px';
+    tip.style.top = (ev.clientY - 10) + 'px';
+  };
+  svg.onmouseleave = () => { tip.style.display = 'none'; cross.style.display = 'none'; dots.forEach(c => c.style.display = 'none'); };
 }
 
 function drawHist(sid, metric, years) {
@@ -350,7 +436,7 @@ $('#csv').onclick = () => {
   a.download = `valuation_${$('#metric').value}.csv`; a.click();
 };
 let rzTimer;
-addEventListener('resize', () => { clearTimeout(rzTimer); rzTimer = setTimeout(() => { if (SEL) drawHist(SEL, $('#metric').value, +$('#win').value); }, 150); });
+addEventListener('resize', () => { clearTimeout(rzTimer); rzTimer = setTimeout(() => { if (SEL) { drawHist(SEL, $('#metric').value, +$('#win').value); drawTrend(SEL, +$('#win').value); } }, 150); });
 
 (async () => {
   [SERIES, VAL] = await Promise.all([fetch('/api/series').then(r => r.json()), fetch('/api/valuation').then(r => r.json())]);
