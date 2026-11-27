@@ -285,9 +285,10 @@ async function detail() {
     <div class="hint">Follows the Metric picker. Forward EPS / sales / EBITDA / EBIT / FCF = Bloomberg BEst, blended
       next-12-month consensus; GAAP EPS = price ÷ GAAP P/E; book value / share = price ÷ P/B. EV and the EV fundamentals
       are in USD millions. ▼ / ▲ mark major cycle peaks / troughs (a turn of at least 20%, 12% for the fundamental).</div>` : ''}
-    <div class="scroll" style="margin-top:10px"><table>
+    <div class="hint" style="margin-top:12px">Click a metric to chart it.</div>
+    <div class="scroll" style="margin-top:4px;max-width:760px"><table id="mtab">
       <thead><tr class="hdr"><th class="lbl">Metric</th><th>Current</th><th>Mean</th><th>Z</th><th>Pctile</th></tr></thead>
-      <tbody>${rows.map(({m, st}) => `<tr class="${m.id === metric ? 'sel' : ''}">
+      <tbody>${rows.map(({m, st}) => `<tr class="pick${m.id === metric ? ' sel' : ''}" data-m="${m.id}" title="Chart ${m.label}">
         <td class="lbl">${m.label}</td><td>${f1(st.cur)}</td><td>${f1(st.mean)}</td>
         <td style="background:${heat(st.z, 2.5)}">${f2(st.z)}</td>
         <td style="background:${heat(st.pct == null ? null : st.pct - .5, .5)}">${st.pct == null ? '' : (st.pct * 100).toFixed(0) + '%'}</td></tr>`).join('')}
@@ -310,6 +311,13 @@ async function detail() {
     drawHist(SEL, metric, years);
   }
   drawTrend(SEL, years);
+  // clicking a metric row switches the Metric picker: table, history chart and trend all follow
+  document.querySelectorAll('#mtab tr.pick').forEach(tr => tr.onclick = () => {
+    if (tr.dataset.m === $('#metric').value) return;
+    $('#metric').value = tr.dataset.m;
+    $('#metric').dispatchEvent(new Event('change'));
+    $('#detail').scrollIntoView({behavior: 'smooth', block: 'start'});
+  });
 }
 
 /* ---------- trend: forward EPS / price / forward P/E, stacked, shared date axis ---------- */
