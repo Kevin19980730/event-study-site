@@ -263,28 +263,17 @@ async function detail() {
     <h2>${esc(s.n)} <span class="small">${$('#win').selectedOptions[0].textContent}</span></h2>
     <div class="hint" style="margin:2px 0 8px"><b>${esc(s.t)} US Equity</b> · #${s.r} by market cap ($${capFmt(s.cap)}) ·
       ${esc(s.sec)} › ${esc(s.ind)} › ${esc(s.sub)}</div>
-    ${st ? `<div class="cond" style="margin:0 0 6px;gap:6px">
-      <label class="opt">Y axis <input type="number" id="ymin" step="any" placeholder="auto" style="width:72px"></label>
-      <label class="opt">to <input type="number" id="ymax" step="any" placeholder="auto" style="width:72px"></label>
-      <button id="ysig" title="mean ± 3 standard deviations">±3σ</button>
-      <button id="yauto">Auto</button>
-    </div>
-    <svg id="hist"></svg>
-    <div class="legend">
-      <span><span class="key" style="border-color:var(--accent)"></span>${$('#metric').selectedOptions[0].textContent}</span>
-      <span><span class="key dash" style="border-color:var(--text-secondary)"></span>mean</span>
-      <span><span class="band" style="background:color-mix(in srgb,var(--text-muted) 22%,transparent)"></span>±1σ</span>
-      <span><span class="band" style="background:color-mix(in srgb,var(--text-muted) 10%,transparent)"></span>±2σ</span>
-    </div>` : `<div class="muted">No ${$('#metric').selectedOptions[0].textContent} history (losses or no estimate).</div>`}
     ${h.x.px ? `
-    <h2 style="margin-top:14px">${{pe: 'Forward EPS, price &amp; ', pb: 'Book value, price &amp; ', pe_gaap: 'GAAP EPS, price &amp; ',
+    <h2 style="margin-top:10px">${{pe: 'Forward EPS, price &amp; ', pb: 'Book value, price &amp; ', pe_gaap: 'GAAP EPS, price &amp; ',
       ev_sales: 'Sales, EV &amp; ', ev_ebitda: 'EBITDA, EV &amp; ', ev_ebit: 'EBIT, EV &amp; ', ev_fcf: 'FCF, EV &amp; '}[metric] || 'Price &amp; '}${
       $('#metric').selectedOptions[0].textContent} <span class="small">${$('#win').selectedOptions[0].textContent}</span></h2>
     <div class="legend" id="trend-chg"></div>
-    <svg id="trend" style="width:100%;height:480px;display:block"></svg>
-    <div class="hint">Follows the Metric picker. Forward EPS / sales / EBITDA / EBIT / FCF = Bloomberg BEst, blended
-      next-12-month consensus; GAAP EPS = price ÷ GAAP P/E; book value / share = price ÷ P/B. EV and the EV fundamentals
-      are in USD millions. ▼ / ▲ mark major cycle peaks / troughs (a turn of at least 20%, 12% for the fundamental).</div>` : ''}
+    <div id="trend"></div>
+    <div class="hint">Follows the Metric picker and the History window. Forward EPS / sales / EBITDA / EBIT / FCF = Bloomberg
+      BEst, blended next-12-month consensus; GAAP EPS = price ÷ GAAP P/E; book value / share = price ÷ P/B. EV and the EV
+      fundamentals are in USD millions. Mean and σ lines on the multiple are over the chosen history window.
+      ▼ / ▲ mark major cycle peaks / troughs (a turn of at least 20%, 12% for the fundamental).</div>` : ''}
+    ${st ? '' : `<div class="muted">No ${$('#metric').selectedOptions[0].textContent} statistics (losses, no estimate, or under ~6 months).</div>`}
     <div class="hint" style="margin-top:12px">Click a metric to chart it.</div>
     <div class="scroll" style="margin-top:4px;max-width:760px"><table id="mtab">
       <thead><tr class="hdr"><th class="lbl">Metric</th><th>Current</th><th>Mean</th><th>Z</th><th>Pctile</th></tr></thead>
@@ -294,22 +283,6 @@ async function detail() {
         <td style="background:${heat(st.pct == null ? null : st.pct - .5, .5)}">${st.pct == null ? '' : (st.pct * 100).toFixed(0) + '%'}</td></tr>`).join('')}
       </tbody></table></div>
     <div class="hint">${st && st.first != null ? `History from ${isoDay(st.first)} to ${isoDay(st.lastDay)}, ${st.n} trading days.` : ''}</div>`;
-  if (st) {
-    const yin = () => {
-      const a = $('#ymin').value.trim(), b = $('#ymax').value.trim();
-      YR = {lo: a === '' ? null : +a, hi: b === '' ? null : +b};
-      drawHist(SEL, $('#metric').value, +$('#win').value);
-    };
-    $('#ymin').value = YR.lo ?? ''; $('#ymax').value = YR.hi ?? '';
-    $('#ymin').oninput = $('#ymax').oninput = yin;
-    $('#yauto').onclick = () => { $('#ymin').value = $('#ymax').value = ''; yin(); };
-    $('#ysig').onclick = () => {
-      const s3 = stats(SEL, $('#metric').value, +$('#win').value);
-      if (!s3 || !s3.sd) return;
-      $('#ymin').value = +(s3.mean - 3 * s3.sd).toFixed(2); $('#ymax').value = +(s3.mean + 3 * s3.sd).toFixed(2); yin();
-    };
-    drawHist(SEL, metric, years);
-  }
   drawTrend(SEL, years);
   // clicking a metric row switches the Metric picker: table, history chart and trend all follow
   document.querySelectorAll('#mtab tr.pick').forEach(tr => tr.onclick = () => {
@@ -320,37 +293,35 @@ async function detail() {
   });
 }
 
-/* ---------- trend: forward EPS / price / forward P/E, stacked, shared date axis ---------- */
+/* ---------- trend: three separate charts on the same date range: fundamental (log), price / EV (log), and the
+   multiple with its mean and ±1σ / ±2σ lines over the chosen history. Hovering any chart shows all three. ---------- */
 function drawTrend(sid, years) {
-  const svg = $('#trend'), h = hist(sid);
-  if (!svg || !h || !h.x.px) return;
+  const box = $('#trend'), h = hist(sid);
+  if (!box || !h || !h.x.px) return;
   const lastDay = h.d[h.d.length - 1], from = years ? lastDay - Math.round(years * 365.25) : -Infinity;
   const idx = [];
   for (let i = 0; i < h.d.length; i++) if (h.d[i] >= from) idx.push(i);
-  if (idx.length < 2) return;
-  // panels follow the Metric picker: [fundamental,] price, multiple
+  if (idx.length < 2) { box.innerHTML = '<div class="muted">Not enough history in this window.</div>'; return; }
   const M = $('#metric').value, mv = h.m[M] || [], px = h.x.px;
   const mlbl = (VAL.metrics.find(x => x.id === M) || {}).label || M;
   const implied = () => px.map((p, i) => p != null && mv[i] > 0 ? p / mv[i] : null);   // price ÷ multiple
-  // EV multiples: forward sales / EBITDA / EBIT and EV, all on the index's per-share (point) scale
   const EVF = {ev_sales: ['sales', 'Forward sales'], ev_ebitda: ['ebitda', 'Forward EBITDA'], ev_ebit: ['ebit', 'Forward EBIT'],
                ev_fcf: ['fcf', 'Forward FCF']};
   const evm = EVF[M] && h.x.ev ? EVF[M] : null;
   const fund = M === 'pe' && h.x.eps ? {lbl: 'Forward EPS', v: h.x.eps}
              : M === 'pb' ? {lbl: 'Book value / share', v: implied()}
              : M === 'pe_gaap' ? {lbl: 'GAAP EPS', v: implied()}
-             : evm && h.x[evm[0]] ? {lbl: evm[1], v: h.x[evm[0]]} : null;
+             : evm && h.x[evm[0]] ? {lbl: evm[1] + ' ($m)', v: h.x[evm[0]]} : null;
   const panels = [
-    ...(fund ? [{k: 'fund', lbl: fund.lbl, v: fund.v, col: 'var(--pos)', log: true, swing: .12}] : []),
-    evm ? {k: 'px', lbl: 'Enterprise value', v: h.x.ev, col: 'var(--accent)', log: true, swing: .20}
-        : {k: 'px', lbl: 'Price', v: px, col: 'var(--accent)', log: true, swing: .20},
-    {k: 'mult', lbl: mlbl, v: mv, col: 'var(--neg)', swing: .20},
+    ...(fund ? [{k: 'fund', lbl: fund.lbl, v: fund.v, col: 'var(--pos)', log: true, swing: .12, H: 250}] : []),
+    evm ? {k: 'px', lbl: 'Enterprise value ($m)', v: h.x.ev, col: 'var(--accent)', log: true, swing: .20, H: 250}
+        : {k: 'px', lbl: 'Price', v: px, col: 'var(--accent)', log: true, swing: .20, H: 250},
+    {k: 'mult', lbl: mlbl, v: mv, col: 'var(--neg)', swing: .20, H: 320},
   ];
-  const NP = panels.length;
-  /* major cycle peaks/troughs: zigzag -- a peak is confirmed once the series falls `swing` from it,
-     a trough once it rises `swing` (in log terms, so a 20% fall and a 25% rise are the same move).
-     Series with values <= 0 use an absolute move of `swing` x the window's range. The swing is
-     raised until there are at most MAXPIV pivots; the last, unconfirmed leg is not labelled. */
+  const st = stats(sid, M, years);
+  const x0 = h.d[idx[0]], x1 = h.d[idx[idx.length - 1]];
+  /* major cycle peaks/troughs: zigzag on log values (a 20% fall / rise, 12% for the fundamental), raised until
+     a chart has at most 8; the latest, unfinished leg is not marked */
   const MAXPIV = 8;
   const pivots = (v, swing) => {
     const pts = idx.filter(i => v[i] != null);
@@ -376,25 +347,18 @@ function drawTrend(sid, years) {
           else if (t(i) - t(ext) >= th) { out.push({i: ext, top: false}); dir = 1; ext = i; }
         }
       }
-      out = out.filter(q => h.d[q.i] - x0 > 20);      // a window-start value is not a cycle turn
+      out = out.filter(q => h.d[q.i] - x0 > 20);
       if (out.length <= MAXPIV) break;
     }
     return out;
   };
   const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const monYr = d => { const t = new Date(d * DAY); return MON[t.getUTCMonth()] + '-' + String(t.getUTCFullYear()).slice(2); };
-  const H = NP === 3 ? 480 : 340;
-  svg.style.height = H + 'px';
-  const W = svg.clientWidth || 600, m = {t: 8, r: 14, b: 22, l: 52}, gap = 14;
-  const iw = W - m.l - m.r, ph = (H - m.t - m.b - gap * (NP - 1)) / NP;
-  const x0 = h.d[idx[0]], x1 = h.d[idx[idx.length - 1]];
-  const X = d => m.l + (d - x0) / ((x1 - x0) || 1) * iw;
-  const ticks = (lo, hi) => {
-    const raw = (hi - lo) / 3, mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+  const ticks = (lo, hi, n = 4) => {
+    const raw = (hi - lo) / n, mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
     const step = [1, 2, 2.5, 5, 10].map(k => k * mag).find(k => k >= raw) || raw;
     const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) out.push(+v.toFixed(6)); return out;
   };
-  // log-axis ticks: 1-2-5 per decade, denser/sparser so a panel gets ~3-6 labels
   const logTicks = (lo, hi) => {
     const pick = ms => { const out = [];
       for (let e = Math.floor(Math.log10(lo)); e <= Math.ceil(Math.log10(hi)); e++)
@@ -403,21 +367,48 @@ function drawTrend(sid, years) {
     let t = pick([1, 2, 5]);
     if (t.length < 3) t = pick([1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9]);
     if (t.length < 2) t = ticks(lo, hi);
-    else if (t.length > 6) t = pick([1]);
+    else if (t.length > 7) t = pick([1]);
     return t;
   };
   const fmt = v => Math.abs(v) >= 1000 ? Math.round(v).toLocaleString() : +v.toFixed(2);
-  let html = '', chg = [];
+
+  // one block per chart; the multiple gets the Y-axis controls and the σ legend
+  box.innerHTML = panels.map((p, j) => (p.k === 'mult' ? `
+    <div class="cond" style="margin:14px 0 4px;gap:6px">
+      <label class="opt">${esc(mlbl)} Y axis <input type="number" id="ymin" step="any" placeholder="auto" style="width:72px"></label>
+      <label class="opt">to <input type="number" id="ymax" step="any" placeholder="auto" style="width:72px"></label>
+      <button id="ysig" title="mean ± 3 standard deviations">±3σ</button>
+      <button id="yauto">Auto</button>
+    </div>` : '') +
+    `<svg id="tc${j}" style="width:100%;height:${p.H}px;display:block;margin-top:${j && p.k !== 'mult' ? 12 : 0}px"></svg>` +
+    (p.k === 'mult' ? `<div class="legend">
+      <span><span class="key" style="border-color:var(--neg)"></span>${esc(mlbl)}</span>
+      <span><span class="key" style="border-color:var(--text-secondary)"></span>mean</span>
+      <span><span class="key dash" style="border-color:var(--text-secondary)"></span>±1σ</span>
+      <span><span class="key dash" style="border-color:var(--text-muted)"></span>±2σ</span>
+      ${st && st.sd ? `<span class="small">over ${$('#win').selectedOptions[0].textContent}: mean ${f1(st.mean)}, σ ${f1(st.sd)}, now z ${f2(st.z)}</span>` : ''}
+    </div>` : '')).join('');
+
+  const W = box.clientWidth || 600, m = {t: 22, r: 72, b: 22, l: 56}, iw = W - m.l - m.r;
+  const X = d => m.l + (d - x0) / ((x1 - x0) || 1) * iw;
+  const y0 = new Date(x0 * DAY).getUTCFullYear(), y1 = new Date(x1 * DAY).getUTCFullYear(), ys = Math.max(1, Math.ceil((y1 - y0) / 10));
+  const chg = [];
   panels.forEach((p, j) => {
-    const top = m.t + j * (ph + gap);
-    // stocks: forward EPS / price always on a log axis; loss days (values <= 0) can't be drawn on it, so they
-    // become gaps in the line (the hover still shows the real value)
+    const svg = $('#tc' + j), H = p.H, top = m.t, ph = H - m.t - m.b;
+    let html = `<defs><clipPath id="tclip${j}"><rect x="${m.l}" y="${top}" width="${iw}" height="${ph}"/></clipPath></defs>`;
+    // log charts: loss days (values <= 0) can't be drawn, so they become gaps (the hover still shows the real value)
     p.raw = p.v;
     p.hid = p.log ? idx.filter(i => p.v[i] != null && p.v[i] <= 0).length : 0;
     if (p.hid && idx.some(i => p.v[i] > 0)) p.v = p.v.map(v => v != null && v > 0 ? v : null);
     const vs = idx.map(i => p.v[i]).filter(v => v != null);
-    if (!vs.length) { html += `<text x="${m.l}" y="${top + ph / 2}" font-size="11" fill="var(--text-muted)">${p.lbl}: no data</text>`; p.Y = null; return; }
+    p.Y = null;
+    const title = `<text x="${m.l}" y="14" font-size="12" font-weight="600" fill="${p.col}">${esc(p.lbl)}<tspan font-weight="400" fill="var(--text-muted)">${
+      p.log ? (vs.length && Math.min(...vs) > 0 ? (p.hid ? ` · log · ${p.hid} days ≤ 0 not drawn` : ' · log scale') : ' · linear (values ≤ 0)') : ''}</tspan></text>`;
+    if (!vs.length) { svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.innerHTML = title + `<text x="${m.l}" y="${top + ph / 2}" font-size="11" fill="var(--text-muted)">no data in this window</text>`; return; }
     let lo = Math.min(...vs), hi = Math.max(...vs);
+    const sig = p.k === 'mult' && st && st.sd ? [-2, -1, 0, 1, 2].map(k => [k, st.mean + k * st.sd]) : [];
+    if (sig.length) { lo = Math.min(lo, sig[0][1]); hi = Math.max(hi, sig[4][1]); }
     const log = p.log && lo > 0;
     let Y;
     if (log) {
@@ -426,32 +417,51 @@ function drawTrend(sid, years) {
       Y = v => top + ph - (L(v) - llo) / (lhi - llo) * ph;
     } else {
       const pad = (hi - lo) * .06 || Math.abs(hi) * .05 || 1; lo -= pad; hi += pad;
+      if (p.k === 'mult') {                       // manual range from the Y-axis boxes (either end may stay auto)
+        const mlo = Number.isFinite(YR.lo) ? YR.lo : lo, mhi = Number.isFinite(YR.hi) ? YR.hi : hi;
+        if (mhi > mlo) { lo = mlo; hi = mhi; }
+      }
       Y = v => top + ph - (v - lo) / (hi - lo) * ph;
     }
     p.Y = Y;
-    let path = '', pen = false;
-    for (const i of idx) { const v = p.v[i]; if (v == null) { pen = false; continue; }
-      path += (pen ? 'L' : 'M') + X(h.d[i]).toFixed(1) + ' ' + Y(v).toFixed(1); pen = true; }
     html += (log ? logTicks(lo, hi) : ticks(lo, hi)).map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--border)"/>
       <text x="${m.l - 6}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--text-muted)">${fmt(v)}</text>`).join('');
     if (!log && lo < 0 && hi > 0) html += `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}" stroke="var(--text-secondary)" stroke-dasharray="3 3"/>`;
-    html += `<text x="${m.l + 6}" y="${top + 12}" font-size="11" font-weight="600" fill="${p.col}">${p.lbl}${p.log ? `<tspan font-weight="400" fill="var(--text-muted)"> · ${log ? (p.hid ? `log · ${p.hid} days ≤ 0 not drawn` : 'log') : 'linear (values ≤ 0)'}</tspan>` : ''}</text>
-      <path d="${path}" fill="none" stroke="${p.col}" stroke-width="1.5" stroke-linejoin="round"/>
-      <circle class="tdot" data-j="${j}" r="3" fill="${p.col}" style="display:none"/>`;
-    // label the major cycle peaks (▼, above the point) and troughs (▲, below), without overlaps:
-    // each label tries rows moving away from its point, then the other side; the panel title and
-    // labels already placed are taken. No free row -> circle only (its value shows on hover).
-    const taken = [{x0: m.l, x1: m.l + 10 + 6.2 * (p.lbl.length + (p.log ? (p.hid ? 28 : 6) : 0)), y0: top, y1: top + 14}];
+    // the multiple: shaded ±1σ / ±2σ bands, mean line, and labelled +2σ, +1σ, mean, −1σ, −2σ lines
+    if (sig.length) {
+      const yv = v => Math.max(top, Math.min(top + ph, Y(v)));
+      const band = (a, b, op) => `<rect x="${m.l}" width="${iw}" y="${yv(b).toFixed(1)}" height="${Math.max(0, yv(a) - yv(b)).toFixed(1)}"
+        fill="color-mix(in srgb,var(--text-muted) ${op}%,transparent)"/>`;
+      html += band(sig[0][1], sig[4][1], 8) + band(sig[1][1], sig[3][1], 16);
+      for (const [k, v] of sig) {
+        if (v < lo || v > hi) continue;
+        const yy = Y(v).toFixed(1), main = k === 0;
+        html += `<line x1="${m.l}" x2="${W - m.r}" y1="${yy}" y2="${yy}" stroke="var(${Math.abs(k) === 2 ? '--text-muted' : '--text-secondary'})"
+            stroke-width="${main ? 1.3 : 1}" ${main ? '' : `stroke-dasharray="${Math.abs(k) === 2 ? '2 4' : '6 4'}"`}/>
+          <text x="${W - m.r + 6}" y="${(+yy + 3.5).toFixed(1)}" font-size="10" fill="var(--text-secondary)">${main ? 'mean' : (k > 0 ? '+' : '−') + Math.abs(k) + 'σ'} ${f1(v)}</text>`;
+      }
+    }
+    let path = '', pen = false;
+    for (const i of idx) { const v = p.v[i]; if (v == null) { pen = false; continue; }
+      path += (pen ? 'L' : 'M') + X(h.d[i]).toFixed(1) + ' ' + Y(v).toFixed(1); pen = true; }
+    html += `<path d="${path}" fill="none" stroke="${p.col}" stroke-width="1.6" stroke-linejoin="round" clip-path="url(#tclip${j})"/>`;
+    // current value: dot + label at the right edge
+    let li = idx.length - 1; while (li >= 0 && p.v[idx[li]] == null) li--;
+    if (li >= 0) { const v = p.v[idx[li]], cy = Y(v);
+      if (cy >= top && cy <= top + ph) html += `<circle cx="${X(h.d[idx[li]]).toFixed(1)}" cy="${cy.toFixed(1)}" r="3.5" fill="${p.col}"/>` +
+        (sig.length ? '' : `<text x="${W - m.r + 6}" y="${(cy + 3.5).toFixed(1)}" font-size="10" font-weight="600" fill="${p.col}">${fmt(v)}</text>`); }
+    // major cycle peaks (▼) / troughs (▲), labels placed without overlaps
+    const taken = [{x0: m.l, x1: W, y0: 0, y1: top}];
     const hit = r => taken.some(t => r.x0 < t.x1 && r.x1 > t.x0 && r.y0 < t.y1 && r.y1 > t.y0);
     for (const q of pivots(p.v, p.swing)) {
       const cx = X(h.d[q.i]), cy = Y(p.v[q.i]);
+      if (cy < top || cy > top + ph) continue;
       const txt = `${q.top ? '▼' : '▲'} ${fmt(+p.v[q.i].toPrecision(4))} ${monYr(h.d[q.i])}`, w = txt.length * 5.5;
       const x0r = Math.min(Math.max(cx - w / 2, m.l), W - m.r - w);
-      const dirs = q.top ? [-1, 1] : [1, -1];
       let place = null;
-      for (const s of dirs) {
+      for (const s of (q.top ? [-1, 1] : [1, -1])) {
         for (let k = 0; k < 4 && !place; k++) {
-          const base = s < 0 ? cy - 5 - k * 11 : cy + 12 + k * 11;          // text baseline
+          const base = s < 0 ? cy - 5 - k * 11 : cy + 12 + k * 11;
           const r = {x0: x0r - 1, x1: x0r + w + 1, y0: base - 9, y1: base + 2};
           if (r.y0 < top || r.y1 > top + ph + 2) break;
           if (!hit(r)) place = {r, base};
@@ -464,38 +474,62 @@ function drawTrend(sid, years) {
       html += `<text x="${x0r.toFixed(1)}" y="${place.base.toFixed(1)}" font-size="9" fill="var(--text-secondary)"
           paint-order="stroke" stroke="var(--surface-1)" stroke-width="3">${txt}</text>`;
     }
-    // change over the window: first vs last non-empty value
+    for (let y = y0 + 1; y <= y1; y += ys) { const d = Date.UTC(y, 0, 1) / DAY;
+      html += `<text x="${X(d).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--text-muted)">${y}</text>`; }
+    html += title + `<line class="tcross" y1="${top}" y2="${top + ph}" stroke="var(--border-strong)" style="display:none"/>
+      <circle class="tdot" r="3.5" fill="${p.col}" style="display:none"/>`;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = html;
     let a = null, b = null;
     for (const i of idx) if (p.v[i] != null) { if (a == null) a = p.v[i]; b = p.v[i]; }
-    chg.push(`<span><span class="key" style="border-color:${p.col}"></span>${p.lbl} <b>${fmt(b)}</b>${
+    chg.push(`<span><span class="key" style="border-color:${p.col}"></span>${esc(p.lbl)} <b>${fmt(b)}</b>${
       p.k === 'mult' ? ` (${(b - a >= 0 ? '+' : '') + (b - a).toFixed(1)} pts)` : a > 0 ? ` (${(b / a - 1 >= 0 ? '+' : '') + ((b / a - 1) * 100).toFixed(1)}%)` : ''}</span>`);
   });
-  const y0 = new Date(x0 * DAY).getUTCFullYear(), y1 = new Date(x1 * DAY).getUTCFullYear(), ys = Math.max(1, Math.ceil((y1 - y0) / 8));
-  for (let y = y0 + 1; y <= y1; y += ys) { const d = Date.UTC(y, 0, 1) / DAY;
-    html += `<text x="${X(d).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--text-muted)">${y}</text>`; }
-  html += `<line id="tcross" y1="${m.t}" y2="${H - m.b}" stroke="var(--border-strong)" style="display:none"/>`;
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  svg.innerHTML = html;
-  $('#trend-chg').innerHTML = `<span class="small">change over window:</span>` + chg.join('');
-  const tip = $('#tip'), cross = svg.querySelector('#tcross'), dots = svg.querySelectorAll('.tdot');
-  svg.onmousemove = ev => {
-    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width);
-    if (px < m.l || px > W - m.r) { svg.onmouseleave(); return; }
-    const d = x0 + (px - m.l) / iw * (x1 - x0);
-    let lo = 0, hi = idx.length - 1;
-    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (h.d[idx[mid]] < d) lo = mid; else hi = mid; }
-    const i = Math.abs(h.d[idx[lo]] - d) <= Math.abs(h.d[idx[hi]] - d) ? idx[lo] : idx[hi];
-    const cx = X(h.d[i]).toFixed(1);
-    cross.style.display = ''; cross.setAttribute('x1', cx); cross.setAttribute('x2', cx);
-    dots.forEach(c => { const p = panels[+c.dataset.j], v = p.v[i];
-      if (v == null || !p.Y) { c.style.display = 'none'; return; }
-      c.style.display = ''; c.setAttribute('cx', cx); c.setAttribute('cy', p.Y(v).toFixed(1)); });
-    tip.style.display = 'block';
-    tip.innerHTML = `<b>${isoDay(h.d[i])}</b>` + panels.map(p => `<br>${p.lbl}: ${(p.raw || p.v)[i] == null ? '—' : fmt((p.raw || p.v)[i])}`).join('');
-    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 190) + 'px';
-    tip.style.top = (ev.clientY - 10) + 'px';
+  if ($('#trend-chg')) $('#trend-chg').innerHTML = `<span class="small">change over window:</span>` + chg.join('');
+
+  // hover: one crosshair across all three charts, tooltip with every value
+  const tip = $('#tip'), svgs = panels.map((p, j) => $('#tc' + j));
+  const hide = () => { tip.style.display = 'none'; svgs.forEach(s => s.querySelectorAll('.tcross,.tdot').forEach(e => e.style.display = 'none')); };
+  svgs.forEach(svg => {
+    svg.onmouseleave = hide;
+    svg.onmousemove = ev => {
+      const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width);
+      if (px < m.l || px > W - m.r) { hide(); return; }
+      const d = x0 + (px - m.l) / iw * (x1 - x0);
+      let lo = 0, hi = idx.length - 1;
+      while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (h.d[idx[mid]] < d) lo = mid; else hi = mid; }
+      const i = Math.abs(h.d[idx[lo]] - d) <= Math.abs(h.d[idx[hi]] - d) ? idx[lo] : idx[hi];
+      const cx = X(h.d[i]).toFixed(1);
+      panels.forEach((p, j) => {
+        const c = svgs[j].querySelector('.tcross'), dot = svgs[j].querySelector('.tdot');
+        if (!c) return;
+        c.style.display = ''; c.setAttribute('x1', cx); c.setAttribute('x2', cx);
+        const v = p.v[i];
+        if (v == null || !p.Y) { dot.style.display = 'none'; return; }
+        dot.style.display = ''; dot.setAttribute('cx', cx); dot.setAttribute('cy', p.Y(v).toFixed(1));
+      });
+      const mvv = panels[panels.length - 1].raw[i];
+      tip.style.display = 'block';
+      tip.innerHTML = `<b>${isoDay(h.d[i])}</b>` + panels.map(p => `<br>${esc(p.lbl)}: ${p.raw[i] == null ? '—' : fmt(p.raw[i])}`).join('') +
+        (mvv != null && st && st.sd ? `<br>z ${((mvv - st.mean) / st.sd).toFixed(2)}` : '');
+      tip.style.left = Math.min(ev.clientX + 14, innerWidth - 200) + 'px';
+      tip.style.top = (ev.clientY - 10) + 'px';
+    };
+  });
+
+  // Y-axis controls for the multiple chart
+  const yin = () => {
+    const a = $('#ymin').value.trim(), b = $('#ymax').value.trim();
+    YR = {lo: a === '' ? null : +a, hi: b === '' ? null : +b};
+    drawTrend(sid, years);
   };
-  svg.onmouseleave = () => { tip.style.display = 'none'; cross.style.display = 'none'; dots.forEach(c => c.style.display = 'none'); };
+  $('#ymin').value = YR.lo ?? ''; $('#ymax').value = YR.hi ?? '';
+  $('#ymin').onchange = $('#ymax').onchange = yin;
+  $('#yauto').onclick = () => { $('#ymin').value = $('#ymax').value = ''; yin(); };
+  $('#ysig').onclick = () => {
+    if (!st || !st.sd) return;
+    $('#ymin').value = +(st.mean - 3 * st.sd).toFixed(2); $('#ymax').value = +(st.mean + 3 * st.sd).toFixed(2); yin();
+  };
 }
 
 function drawHist(sid, metric, years) {
@@ -586,7 +620,7 @@ $('#csv').onclick = () => {
   a.download = `stocks_${$('#metric').value}.csv`; a.click();
 };
 let rzTimer;
-addEventListener('resize', () => { clearTimeout(rzTimer); rzTimer = setTimeout(() => { if (SEL && hist(SEL)) { drawHist(SEL, $('#metric').value, +$('#win').value); drawTrend(SEL, +$('#win').value); } }, 150); });
+addEventListener('resize', () => { clearTimeout(rzTimer); rzTimer = setTimeout(() => { if (SEL && hist(SEL)) drawTrend(SEL, +$('#win').value); }, 150); });
 
 (async () => {
   STK = await fetch('/api/stocks').then(r => r.json());
