@@ -23,8 +23,8 @@ td.stale{color:var(--text-muted)}
 .key.dash{border-top-style:dashed}
 .band{display:inline-block;width:14px;height:10px;vertical-align:-1px;margin-right:5px}
 .small{font-size:11px;color:var(--text-muted);font-weight:400}
-.pair{display:grid;grid-template-columns:minmax(300px,2fr) minmax(280px,1fr);gap:14px}
-@media (max-width:900px){.pair{grid-template-columns:1fr}}
+.pair{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}     /* table on top, charts full width below */
+#detail{scroll-margin-top:8px}
 .pair .card{margin-bottom:0}
 input[type=search]{min-width:160px}
 select.gics{max-width:220px}
@@ -86,7 +86,7 @@ select.gics{max-width:220px}
 
   <div class="pair">
     <div class="card">
-      <div class="scroll" style="max-height:78vh"><table id="tab"></table></div>
+      <div class="scroll" style="max-height:52vh"><table id="tab"></table></div>
       <div class="legend" id="tab-legend"></div>
     </div>
     <div class="card" id="detail"><div class="muted">Pick a row.</div></div>
@@ -200,7 +200,8 @@ function render() {
   });
   document.querySelectorAll('#tab tr.pick').forEach(tr => tr.onclick = () => {
     if (tr.dataset.id !== SEL) YR = {lo: null, hi: null};
-    SEL = tr.dataset.id; save(); render(); detail();
+    SEL = tr.dataset.id; save(); render();
+    detail().then(() => $('#detail').scrollIntoView({behavior: 'smooth', block: 'start'}));   // charts sit below the table
   });
 }
 
@@ -401,10 +402,15 @@ function drawTrend(sid, years) {
   let html = '', chg = [];
   panels.forEach((p, j) => {
     const top = m.t + j * (ph + gap);
+    // stocks: forward EPS / price always on a log axis; loss days (values <= 0) can't be drawn on it, so they
+    // become gaps in the line (the hover still shows the real value)
+    p.raw = p.v;
+    p.hid = p.log ? idx.filter(i => p.v[i] != null && p.v[i] <= 0).length : 0;
+    if (p.hid && idx.some(i => p.v[i] > 0)) p.v = p.v.map(v => v != null && v > 0 ? v : null);
     const vs = idx.map(i => p.v[i]).filter(v => v != null);
     if (!vs.length) { html += `<text x="${m.l}" y="${top + ph / 2}" font-size="11" fill="var(--text-muted)">${p.lbl}: no data</text>`; p.Y = null; return; }
     let lo = Math.min(...vs), hi = Math.max(...vs);
-    const log = p.log && lo > 0;                 // log scale needs every value > 0 (losses -> linear)
+    const log = p.log && lo > 0;
     let Y;
     if (log) {
       const L = Math.log, pad = (L(hi) - L(lo)) * .06 || .05, llo = L(lo) - pad, lhi = L(hi) + pad;
@@ -421,13 +427,13 @@ function drawTrend(sid, years) {
     html += (log ? logTicks(lo, hi) : ticks(lo, hi)).map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--border)"/>
       <text x="${m.l - 6}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--text-muted)">${fmt(v)}</text>`).join('');
     if (!log && lo < 0 && hi > 0) html += `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}" stroke="var(--text-secondary)" stroke-dasharray="3 3"/>`;
-    html += `<text x="${m.l + 6}" y="${top + 12}" font-size="11" font-weight="600" fill="${p.col}">${p.lbl}${p.log ? `<tspan font-weight="400" fill="var(--text-muted)"> · ${log ? 'log' : 'linear (values ≤ 0)'}</tspan>` : ''}</text>
+    html += `<text x="${m.l + 6}" y="${top + 12}" font-size="11" font-weight="600" fill="${p.col}">${p.lbl}${p.log ? `<tspan font-weight="400" fill="var(--text-muted)"> · ${log ? (p.hid ? `log · ${p.hid} days ≤ 0 not drawn` : 'log') : 'linear (values ≤ 0)'}</tspan>` : ''}</text>
       <path d="${path}" fill="none" stroke="${p.col}" stroke-width="1.5" stroke-linejoin="round"/>
       <circle class="tdot" data-j="${j}" r="3" fill="${p.col}" style="display:none"/>`;
     // label the major cycle peaks (▼, above the point) and troughs (▲, below), without overlaps:
     // each label tries rows moving away from its point, then the other side; the panel title and
     // labels already placed are taken. No free row -> circle only (its value shows on hover).
-    const taken = [{x0: m.l, x1: m.l + 10 + 6.2 * (p.lbl.length + (p.log ? 6 : 0)), y0: top, y1: top + 14}];
+    const taken = [{x0: m.l, x1: m.l + 10 + 6.2 * (p.lbl.length + (p.log ? (p.hid ? 28 : 6) : 0)), y0: top, y1: top + 14}];
     const hit = r => taken.some(t => r.x0 < t.x1 && r.x1 > t.x0 && r.y0 < t.y1 && r.y1 > t.y0);
     for (const q of pivots(p.v, p.swing)) {
       const cx = X(h.d[q.i]), cy = Y(p.v[q.i]);
@@ -477,7 +483,7 @@ function drawTrend(sid, years) {
       if (v == null || !p.Y) { c.style.display = 'none'; return; }
       c.style.display = ''; c.setAttribute('cx', cx); c.setAttribute('cy', p.Y(v).toFixed(1)); });
     tip.style.display = 'block';
-    tip.innerHTML = `<b>${isoDay(h.d[i])}</b>` + panels.map(p => `<br>${p.lbl}: ${p.v[i] == null ? '—' : fmt(p.v[i])}`).join('');
+    tip.innerHTML = `<b>${isoDay(h.d[i])}</b>` + panels.map(p => `<br>${p.lbl}: ${(p.raw || p.v)[i] == null ? '—' : fmt((p.raw || p.v)[i])}`).join('');
     tip.style.left = Math.min(ev.clientX + 14, innerWidth - 190) + 'px';
     tip.style.top = (ev.clientY - 10) + 'px';
   };
